@@ -19,7 +19,7 @@ import (
 
 func fetchManifest() ([]releaseManifest, error) {
 	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Get(manifestURL) 
+	resp, err := client.Get(manifestURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch Go downloads manifest: %w", err)
 	}
