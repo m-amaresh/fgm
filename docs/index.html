@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>fgm — Fast Go Manager</title>
+  <meta name="description"
+    content="A minimal, fast Go version manager. Install and switch Go versions in seconds. No shell hooks needed." />
+
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+Mono:wght@400;600&display=swap"
+    rel="stylesheet" />
+  <!-- Font Awesome 7 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" />
+  <!-- AOS -->
+  <link href="https://unpkg.com/aos@2.3.4/dist/aos.css" rel="stylesheet" />
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'electric-green': '#05f140',
+            'gh-dark': '#0d1117',
+            'gh-darker': '#010409',
+            'gh-border': '#30363d',
+            'gh-surface': '#161b22'
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      background-color: #0d1117;
+      color: #e6edf3;
+      font-family: 'Google Sans', 'Product Sans', sans-serif;
+    }
+
+    /* Terminal chrome dots */
+    .dot-red {
+      background: #ff5f57;
+    }
+
+    .dot-yellow {
+      background: #febc2e;
+    }
+
+    .dot-green {
+      background: #28c840;
+    }
+
+    /* Monospace — IBM Plex Mono for all terminal/code elements */
+    pre,
+    code,
+    .mono {
+      font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+    }
+
+    /* Tab active state */
+    .tab-btn.active {
+      color: #05f140;
+      border-bottom-color: #05f140;
+    }
+
+    /* Timeline connector between steps */
+    .timeline-item:not(:last-child)>.step-connector::after {
+      content: '';
+      display: block;
+      width: 2px;
+      flex: 1;
+      background: #30363d;
+      margin: 4px auto 0;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #0d1117;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #30363d;
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #05f140;
+    }
+  </style>
+</head>
+
+<body class="antialiased">
+
+  <!-- ====================================================
+       NAVBAR
+  ===================================================== -->
+  <nav class="fixed top-0 inset-x-0 z-50 bg-gh-dark/80 backdrop-blur-md border-b border-gh-border">
+    <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <span class="text-electric-green font-bold text-xl tracking-tight mono">fgm</span>
+      <a href="https://github.com/m-amaresh/fgm" target="_blank" rel="noopener noreferrer"
+        class="flex items-center gap-2 text-gray-400 hover:text-white transition-colors duration-200"
+        aria-label="View fgm on GitHub">
+        <i class="fa-brands fa-github text-2xl"></i>
+        <span class="hidden sm:inline text-sm font-medium">GitHub</span>
+      </a>
+    </div>
+  </nav>
+
+  <!-- ====================================================
+       HERO
+  ===================================================== -->
+  <section id="hero" class="min-h-screen flex flex-col items-center justify-center pt-14 px-4">
+    <div class="text-center w-full max-w-4xl" data-aos="fade-up">
+
+      <!-- ASCII Logo -->
+      <pre
+        class="inline-block select-none text-left mb-8 text-electric-green whitespace-pre leading-none tracking-normal text-[14px] sm:text-[15px] font-mono"
+        style="font-variant-ligatures:none;">███████╗ ██████╗ ███╗   ███╗
+██╔════╝██╔════╝ ████╗ ████║
+█████╗  ██║  ███╗██╔████╔██║
+██╔══╝  ██║   ██║██║╚██╔╝██║
+██║     ╚██████╔╝██║ ╚═╝ ██║
+╚═╝      ╚═════╝ ╚═╝     ╚═╝</pre>
+
+      <!-- Tagline -->
+      <p class="text-lg sm:text-xl text-gray-300 mb-10 font-light">
+        Fast Go Manager &mdash; install and switch Go versions in seconds.
+      </p>
+
+      <!-- Install Tabs -->
+      <div class="max-w-2xl mx-auto mb-10">
+        <!-- Tab bar -->
+        <div class="flex border-b border-gh-border">
+          <button id="tab-unix"
+            class="tab-btn active px-5 py-2.5 text-sm font-medium border-b-2 border-transparent transition-all duration-150 focus:outline-none"
+            onclick="switchTab('unix')">
+            <i class="fa-brands fa-linux mr-1.5"></i>Linux / macOS
+          </button>
+          <button id="tab-win"
+            class="tab-btn px-5 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition-all duration-150 focus:outline-none"
+            onclick="switchTab('win')">
+            <i class="fa-brands fa-windows mr-1.5"></i>Windows
+          </button>
+        </div>
+
+        <!-- Terminal block — Unix -->
+        <div id="panel-unix" class="bg-gh-darker border border-t-0 border-gh-border rounded-b-lg">
+          <div class="flex items-center justify-between px-5 py-4 gap-4">
+            <code id="cmd-unix"
+              class="mono text-sm text-gray-200 break-all text-left flex-1">curl -fsSL https://raw.githubusercontent.com/m-amaresh/fgm/main/scripts/install.sh | bash</code>
+            <button onclick="copyCmd('unix')"
+              class="relative flex-shrink-0 text-gray-500 hover:text-electric-green transition-colors duration-150 focus:outline-none"
+              title="Copy command" aria-label="Copy install command for Linux / macOS">
+              <i id="icon-unix" class="fa-regular fa-copy text-lg"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Terminal block — Windows (hidden by default) -->
+        <div id="panel-win" class="hidden bg-gh-darker border border-t-0 border-gh-border rounded-b-lg">
+          <div class="flex items-center justify-between px-5 py-4 gap-4">
+            <code id="cmd-win"
+              class="mono text-sm text-gray-200 break-all text-left flex-1">iwr -useb https://raw.githubusercontent.com/m-amaresh/fgm/main/scripts/install.ps1 | iex</code>
+            <button onclick="copyCmd('win')"
+              class="relative flex-shrink-0 text-gray-500 hover:text-electric-green transition-colors duration-150 focus:outline-none"
+              title="Copy command" aria-label="Copy install command for Windows">
+              <i id="icon-win" class="fa-regular fa-copy text-lg"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- CTA Buttons -->
+      <div class="flex flex-col sm:flex-row gap-4 justify-center">
+        <a href="https://github.com/m-amaresh/fgm" target="_blank" rel="noopener noreferrer"
+          class="inline-flex items-center justify-center gap-2 px-7 py-3 rounded-lg border border-gh-border text-gray-200 hover:border-electric-green hover:text-electric-green transition-all duration-200 font-medium">
+          <i class="fa-brands fa-github"></i>View on GitHub
+        </a>
+        <a href="#how-it-works"
+          class="inline-flex items-center justify-center gap-2 px-7 py-3 rounded-lg bg-electric-green text-gh-darker hover:brightness-110 transition-all duration-200 font-semibold">
+          <i class="fa-solid fa-book-open"></i>Read Docs
+        </a>
+      </div>
+
+    </div>
+
+    <!-- Scroll cue -->
+    <a href="#features" class="mt-16 text-gray-600 hover:text-electric-green transition-colors duration-200 animate-bounce"
+      aria-label="Scroll down">
+      <i class="fa-solid fa-chevron-down text-xl"></i>
+    </a>
+  </section>
+
+  <!-- ====================================================
+       FEATURES
+  ===================================================== -->
+  <section id="features" class="py-24 px-4 bg-gh-surface/30">
+    <div class="max-w-6xl mx-auto">
+
+      <div class="text-center mb-16" data-aos="fade-up">
+        <h2 class="text-3xl font-bold text-white mb-4">Why fgm?</h2>
+        <p class="text-gray-400 max-w-xl mx-auto">Everything you need, nothing you don't. A fast, no-nonsense Go version
+          manager.</p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+
+        <div data-aos="fade-up" data-aos-delay="0"
+          class="bg-gh-surface border border-gh-border rounded-xl p-6 hover:border-electric-green transition-colors duration-200">
+          <div class="w-11 h-11 flex items-center justify-center rounded-lg bg-electric-green/10 mb-5">
+            <i class="fa-solid fa-bolt text-electric-green text-lg"></i>
+          </div>
+          <h3 class="text-white font-semibold text-lg mb-2">Blazing Fast</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">Downloads and extracts in seconds with a live progress bar.
+          </p>
+        </div>
+
+        <div data-aos="fade-up" data-aos-delay="60"
+          class="bg-gh-surface border border-gh-border rounded-xl p-6 hover:border-electric-green transition-colors duration-200">
+          <div class="w-11 h-11 flex items-center justify-center rounded-lg bg-electric-green/10 mb-5">
+            <i class="fa-solid fa-shield-halved text-electric-green text-lg"></i>
+          </div>
+          <h3 class="text-white font-semibold text-lg mb-2">Checksum Verified</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">Every download verified against official SHA-256 checksums.
+          </p>
+        </div>
+
+        <div data-aos="fade-up" data-aos-delay="120"
+          class="bg-gh-surface border border-gh-border rounded-xl p-6 hover:border-electric-green transition-colors duration-200">
+          <div class="w-11 h-11 flex items-center justify-center rounded-lg bg-electric-green/10 mb-5">
+            <i class="fa-solid fa-ghost text-electric-green text-lg"></i>
+          </div>
+          <h3 class="text-white font-semibold text-lg mb-2">No Shell Hooks</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">Shims resolve the active version at runtime. No eval, no
+            hooks.</p>
+        </div>
+
+        <div data-aos="fade-up" data-aos-delay="0"
+          class="bg-gh-surface border border-gh-border rounded-xl p-6 hover:border-electric-green transition-colors duration-200">
+          <div class="w-11 h-11 flex items-center justify-center rounded-lg bg-electric-green/10 mb-5">
+            <i class="fa-solid fa-layer-group text-electric-green text-lg"></i>
+          </div>
+          <h3 class="text-white font-semibold text-lg mb-2">Multiple Versions</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">Install and keep as many Go versions side by side as you
+            need.</p>
+        </div>
+
+        <div data-aos="fade-up" data-aos-delay="60"
+          class="bg-gh-surface border border-gh-border rounded-xl p-6 hover:border-electric-green transition-colors duration-200">
+          <div class="w-11 h-11 flex items-center justify-center rounded-lg bg-electric-green/10 mb-5">
+            <i class="fa-solid fa-rotate text-electric-green text-lg"></i>
+          </div>
+          <h3 class="text-white font-semibold text-lg mb-2">Smart Caching</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">Release manifest cached locally for 15 minutes — stays fast
+            offline.</p>
+        </div>
+
+        <div data-aos="fade-up" data-aos-delay="120"
+          class="bg-gh-surface border border-gh-border rounded-xl p-6 hover:border-electric-green transition-colors duration-200">
+          <div class="w-11 h-11 flex items-center justify-center rounded-lg bg-electric-green/10 mb-5">
+            <i class="fa-solid fa-terminal text-electric-green text-lg"></i>
+          </div>
+          <h3 class="text-white font-semibold text-lg mb-2">Clean Shims</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">
+            <code class="mono text-electric-green text-xs">go</code> and
+            <code class="mono text-electric-green text-xs">gofmt</code> shims just work once
+            <code class="mono text-electric-green text-xs">~/.fgm/bin</code> is on your PATH.
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================
+       QUICK START
+  ===================================================== -->
+  <section id="quick-start" class="py-24 px-4">
+    <div class="max-w-3xl mx-auto">
+
+      <div class="text-center mb-14" data-aos="fade-up">
+        <h2 class="text-3xl font-bold text-white mb-4">Quick Start</h2>
+        <p class="text-gray-400">Up and running in three commands.</p>
+      </div>
+
+      <!-- Terminal window -->
+      <div data-aos="fade-up" data-aos-delay="80"
+        class="rounded-xl overflow-hidden border border-gh-border shadow-2xl shadow-black/60">
+
+        <!-- Chrome bar -->
+        <div class="flex items-center gap-2 px-4 py-3 bg-gh-surface border-b border-gh-border">
+          <span class="dot-red    w-3 h-3 rounded-full inline-block"></span>
+          <span class="dot-yellow w-3 h-3 rounded-full inline-block"></span>
+          <span class="dot-green  w-3 h-3 rounded-full inline-block"></span>
+          <span class="ml-3 text-xs text-gray-500 mono select-none">fgm &mdash; bash</span>
+        </div>
+
+        <!-- Terminal body -->
+        <div class="bg-gh-darker px-6 py-6 mono text-sm leading-relaxed overflow-x-auto">
+
+          <p><span class="text-gray-500">$</span> <span class="text-white">fgm install latest</span></p>
+          <p class="text-gray-500">Resolving go 1.26.1...</p>
+          <p class="text-gray-500">Downloading go1.26.1.linux-amd64.tar.gz...</p>
+          <p class="text-gray-500">&nbsp; [<span
+              class="text-white">&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;</span>]
+            100%&nbsp; 63.7 MB / 63.7 MB</p>
+          <p class="text-gray-500">&#10003; Installed go 1.26.1</p>
+
+          <p class="mt-3"><span class="text-gray-500">$</span> <span class="text-white">fgm use latest</span></p>
+          <p class="text-gray-500">&#10003; Using go 1.26.1</p>
+
+          <p class="mt-3"><span class="text-gray-500">$</span> <span class="text-white">go version</span></p>
+          <p class="text-gray-500">go version go1.26.1 linux/amd64</p>
+
+          <p class="mt-3"><span class="text-gray-500">$</span> <span class="text-white">fgm list</span></p>
+          <p class="mt-0.5">
+            <span class="text-electric-green">*</span>
+            <span class="text-electric-green"> 1.26.1</span>
+            <span class="text-gray-500"> (current)</span>
+          </p>
+          <p class="text-gray-500">&nbsp; 1.25.8</p>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================
+       HOW IT WORKS
+  ===================================================== -->
+  <section id="how-it-works" class="py-24 px-4 bg-gh-surface/30">
+    <div class="max-w-3xl mx-auto">
+
+      <div class="text-center mb-16" data-aos="fade-up">
+        <h2 class="text-3xl font-bold text-white mb-4">How It Works</h2>
+        <p class="text-gray-400">Five steps from zero to <code class="mono text-electric-green text-sm">go version</code>.</p>
+      </div>
+
+      <ol class="relative pl-0 space-y-0">
+
+        <!-- Step 1 -->
+        <li class="timeline-item flex gap-6 mb-0" data-aos="fade-up" data-aos-delay="0">
+          <div class="step-connector flex flex-col items-center flex-shrink-0" style="width:2.5rem;">
+            <div
+              class="w-10 h-10 rounded-full bg-electric-green/10 border border-electric-green/40 flex items-center justify-center text-electric-green font-bold text-sm flex-shrink-0">
+              1</div>
+            <div class="w-0.5 flex-1 bg-gh-border mt-1 mb-0" style="min-height:2rem;"></div>
+          </div>
+          <div class="pb-10 pt-1.5">
+            <h3 class="text-white font-semibold mb-1.5">Fetch the release manifest</h3>
+            <p class="text-gray-400 text-sm leading-relaxed">fgm downloads the official Go release list from
+              <code class="mono text-electric-green text-xs">go.dev/dl</code> and caches it locally for 15 minutes so
+              subsequent commands are instant.
+            </p>
+          </div>
+        </li>
+
+        <!-- Step 2 -->
+        <li class="timeline-item flex gap-6" data-aos="fade-up" data-aos-delay="60">
+          <div class="step-connector flex flex-col items-center flex-shrink-0" style="width:2.5rem;">
+            <div
+              class="w-10 h-10 rounded-full bg-electric-green/10 border border-electric-green/40 flex items-center justify-center text-electric-green font-bold text-sm flex-shrink-0">
+              2</div>
+            <div class="w-0.5 flex-1 bg-gh-border mt-1" style="min-height:2rem;"></div>
+          </div>
+          <div class="pb-10 pt-1.5">
+            <h3 class="text-white font-semibold mb-1.5">Download &amp; verify</h3>
+            <p class="text-gray-400 text-sm leading-relaxed">The official tarball (or zip on Windows) is streamed to
+              disk with a live progress bar, then verified against the manifest SHA-256 before extraction.</p>
+          </div>
+        </li>
+
+        <!-- Step 3 -->
+        <li class="timeline-item flex gap-6" data-aos="fade-up" data-aos-delay="120">
+          <div class="step-connector flex flex-col items-center flex-shrink-0" style="width:2.5rem;">
+            <div
+              class="w-10 h-10 rounded-full bg-electric-green/10 border border-electric-green/40 flex items-center justify-center text-electric-green font-bold text-sm flex-shrink-0">
+              3</div>
+            <div class="w-0.5 flex-1 bg-gh-border mt-1" style="min-height:2rem;"></div>
+          </div>
+          <div class="pb-10 pt-1.5">
+            <h3 class="text-white font-semibold mb-1.5">Extract to <code
+                class="mono text-electric-green text-xs">~/.fgm/versions/</code></h3>
+            <p class="text-gray-400 text-sm leading-relaxed">The toolchain is extracted into
+              <code class="mono text-electric-green text-xs">~/.fgm/versions/&lt;version&gt;/</code>. Multiple versions coexist
+              without conflict.
+            </p>
+          </div>
+        </li>
+
+        <!-- Step 4 -->
+        <li class="timeline-item flex gap-6" data-aos="fade-up" data-aos-delay="180">
+          <div class="step-connector flex flex-col items-center flex-shrink-0" style="width:2.5rem;">
+            <div
+              class="w-10 h-10 rounded-full bg-electric-green/10 border border-electric-green/40 flex items-center justify-center text-electric-green font-bold text-sm flex-shrink-0">
+              4</div>
+            <div class="w-0.5 flex-1 bg-gh-border mt-1" style="min-height:2rem;"></div>
+          </div>
+          <div class="pb-10 pt-1.5">
+            <h3 class="text-white font-semibold mb-1.5">Write current-version &amp; generate shims</h3>
+            <p class="text-gray-400 text-sm leading-relaxed">
+              <code class="mono text-electric-green text-xs">fgm use</code> writes the chosen version to
+              <code class="mono text-electric-green text-xs">~/.fgm/current-version</code> and generates thin shims for
+              <code class="mono text-electric-green text-xs">go</code> and
+              <code class="mono text-electric-green text-xs">gofmt</code> in
+              <code class="mono text-electric-green text-xs">~/.fgm/bin/</code>.
+            </p>
+          </div>
+        </li>
+
+        <!-- Step 5 -->
+        <li class="flex gap-6" data-aos="fade-up" data-aos-delay="240">
+          <div class="flex flex-col items-center flex-shrink-0" style="width:2.5rem;">
+            <div
+              class="w-10 h-10 rounded-full bg-electric-green/10 border border-electric-green/40 flex items-center justify-center text-electric-green font-bold text-sm flex-shrink-0">
+              5</div>
+          </div>
+          <div class="pt-1.5">
+            <h3 class="text-white font-semibold mb-1.5">Shims resolve at runtime — no shell hooks</h3>
+            <p class="text-gray-400 text-sm leading-relaxed">Every time you invoke <code
+                class="mono text-electric-green text-xs">go</code>, the shim reads
+              <code class="mono text-electric-green text-xs">current-version</code> and delegates to the right binary.
+              No <code class="mono text-electric-green text-xs">eval</code>, no <code
+                class="mono text-electric-green text-xs">source</code>, no shell modifications.
+            </p>
+          </div>
+        </li>
+
+      </ol>
+    </div>
+  </section>
+
+  <!-- ====================================================
+       VERSION FORMATS
+  ===================================================== -->
+  <section id="version-formats" class="py-24 px-4">
+    <div class="max-w-3xl mx-auto">
+
+      <div class="text-center mb-14" data-aos="fade-up">
+        <h2 class="text-3xl font-bold text-white mb-4">Version Formats</h2>
+        <p class="text-gray-400">fgm accepts flexible version strings so you never have to look up an exact release.</p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-5" data-aos="fade-up" data-aos-delay="60">
+
+        <div
+          class="bg-gh-surface border border-gh-border rounded-xl p-7 hover:border-electric-green transition-colors duration-200 text-center">
+          <code class="mono text-electric-green text-2xl font-bold">latest</code>
+          <p class="text-gray-400 text-sm mt-4 leading-relaxed">Resolves to the most recent stable release,
+            e.g.&nbsp;<code class="mono text-gray-300 text-xs">1.26.1</code>.</p>
+        </div>
+
+        <div
+          class="bg-gh-surface border border-gh-border rounded-xl p-7 hover:border-electric-green transition-colors duration-200 text-center">
+          <code class="mono text-electric-green text-2xl font-bold">1.25</code>
+          <p class="text-gray-400 text-sm mt-4 leading-relaxed">Resolves to the latest patch of Go&nbsp;1.25,
+            e.g.&nbsp;<code class="mono text-gray-300 text-xs">1.25.8</code>.</p>
+        </div>
+
+        <div
+          class="bg-gh-surface border border-gh-border rounded-xl p-7 hover:border-electric-green transition-colors duration-200 text-center">
+          <code class="mono text-electric-green text-2xl font-bold">1.25.5</code>
+          <p class="text-gray-400 text-sm mt-4 leading-relaxed">Pins to an exact release. Fails if <code
+              class="mono text-gray-300 text-xs">1.25.5</code> does not exist.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================
+       CLI REFERENCE
+  ===================================================== -->
+  <section id="cli" class="py-24 px-4 bg-gh-surface/30">
+    <div class="max-w-3xl mx-auto">
+
+      <div class="text-center mb-14" data-aos="fade-up">
+        <h2 class="text-3xl font-bold text-white mb-4">CLI Reference</h2>
+        <p class="text-gray-400">A small, focused command set — nothing extraneous.</p>
+      </div>
+
+      <div class="divide-y divide-gh-border border border-gh-border rounded-xl overflow-hidden" data-aos="fade-up"
+        data-aos-delay="60">
+
+        <div
+          class="grid grid-cols-[12rem_1fr] gap-6 items-start bg-gh-surface/60 hover:bg-gh-surface transition-colors duration-150 px-6 py-5">
+          <div>
+            <code class="mono text-electric-green font-semibold text-sm block">fgm install &lt;version&gt;</code>
+            <span class="mono text-xs text-gray-600">alias: in</span>
+          </div>
+          <p class="text-gray-400 text-sm leading-relaxed">Download a Go version without activating it.</p>
+        </div>
+
+        <div
+          class="grid grid-cols-[12rem_1fr] gap-6 items-start bg-gh-surface/60 hover:bg-gh-surface transition-colors duration-150 px-6 py-5">
+          <div>
+            <code class="mono text-electric-green font-semibold text-sm block">fgm use &lt;version&gt;</code>
+          </div>
+          <p class="text-gray-400 text-sm leading-relaxed">Install if needed, then activate. Updates shims instantly.
+          </p>
+        </div>
+
+        <div
+          class="grid grid-cols-[12rem_1fr] gap-6 items-start bg-gh-surface/60 hover:bg-gh-surface transition-colors duration-150 px-6 py-5">
+          <div>
+            <code class="mono text-electric-green font-semibold text-sm block">fgm uninstall &lt;version&gt;</code>
+            <span class="mono text-xs text-gray-600">alias: un</span>
+          </div>
+          <p class="text-gray-400 text-sm leading-relaxed">Remove a previously installed version from disk.</p>
+        </div>
+
+        <div
+          class="grid grid-cols-[12rem_1fr] gap-6 items-start bg-gh-surface/60 hover:bg-gh-surface transition-colors duration-150 px-6 py-5">
+          <div>
+            <code class="mono text-electric-green font-semibold text-sm block">fgm list</code>
+            <span class="mono text-xs text-gray-600">alias: ls</span>
+          </div>
+          <p class="text-gray-400 text-sm leading-relaxed">List all locally installed versions, marking the current one.
+          </p>
+        </div>
+
+        <div
+          class="grid grid-cols-[12rem_1fr] gap-6 items-start bg-gh-surface/60 hover:bg-gh-surface transition-colors duration-150 px-6 py-5">
+          <div>
+            <code class="mono text-electric-green font-semibold text-sm block">fgm current</code>
+          </div>
+          <p class="text-gray-400 text-sm leading-relaxed">Print the currently active Go version.</p>
+        </div>
+
+        <div
+          class="grid grid-cols-[12rem_1fr] gap-6 items-start bg-gh-surface/60 hover:bg-gh-surface transition-colors duration-150 px-6 py-5">
+          <div>
+            <code class="mono text-electric-green font-semibold text-sm block">--verbose, -v</code>
+          </div>
+          <p class="text-gray-400 text-sm leading-relaxed">Enable verbose diagnostic output. Shows manifest cache status, resolved archive details, and platform info.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================
+       PLATFORMS
+  ===================================================== -->
+  <section id="platforms" class="py-24 px-4">
+    <div class="max-w-3xl mx-auto">
+
+      <div class="text-center mb-14" data-aos="fade-up">
+        <h2 class="text-3xl font-bold text-white mb-4">Supported Platforms</h2>
+        <p class="text-gray-400">Linux and Windows on amd64/arm64, plus macOS on Apple Silicon.</p>
+      </div>
+
+      <div data-aos="fade-up" data-aos-delay="60" class="overflow-x-auto rounded-xl border border-gh-border">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gh-border bg-gh-surface">
+              <th class="text-left px-6 py-4 text-gray-400 font-medium">Platform</th>
+              <th class="text-center px-6 py-4 text-gray-400 font-medium">amd64</th>
+              <th class="text-center px-6 py-4 text-gray-400 font-medium">arm64</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gh-border">
+            <tr class="bg-gh-darker hover:bg-gh-surface/50 transition-colors duration-150">
+              <td class="px-6 py-4 text-white font-medium">
+                <i class="fa-brands fa-linux text-electric-green mr-2"></i>Linux
+              </td>
+              <td class="px-6 py-4 text-center">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-electric-green/15 text-electric-green">
+                  <i class="fa-solid fa-check text-xs"></i>
+                </span>
+              </td>
+              <td class="px-6 py-4 text-center">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-electric-green/15 text-electric-green">
+                  <i class="fa-solid fa-check text-xs"></i>
+                </span>
+              </td>
+            </tr>
+            <tr class="bg-gh-darker hover:bg-gh-surface/50 transition-colors duration-150">
+              <td class="px-6 py-4 text-white font-medium">
+                <i class="fa-brands fa-apple text-electric-green mr-2"></i>macOS
+              </td>
+              <td class="px-6 py-4 text-center">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-500/15 text-red-400">
+                  <i class="fa-solid fa-xmark text-xs"></i>
+                </span>
+              </td>
+              <td class="px-6 py-4 text-center">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-electric-green/15 text-electric-green">
+                  <i class="fa-solid fa-check text-xs"></i>
+                </span>
+              </td>
+            </tr>
+            <tr class="bg-gh-darker hover:bg-gh-surface/50 transition-colors duration-150">
+              <td class="px-6 py-4 text-white font-medium">
+                <i class="fa-brands fa-windows text-electric-green mr-2"></i>Windows
+              </td>
+              <td class="px-6 py-4 text-center">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-electric-green/15 text-electric-green">
+                  <i class="fa-solid fa-check text-xs"></i>
+                </span>
+              </td>
+              <td class="px-6 py-4 text-center">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-electric-green/15 text-electric-green">
+                  <i class="fa-solid fa-check text-xs"></i>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ====================================================
+       FOOTER
+  ===================================================== -->
+  <footer class="py-12 px-4 border-t border-gh-border text-center">
+    <p class="text-gray-400 text-sm mb-4">
+      Built with &#10084;&#65039; for the Go community
+    </p>
+    <a href="https://github.com/m-amaresh/fgm" target="_blank" rel="noopener noreferrer"
+      class="inline-flex items-center gap-2 text-gray-500 hover:text-electric-green transition-colors duration-200 text-sm">
+      <i class="fa-brands fa-github text-lg"></i>
+      github.com/m-amaresh/fgm
+    </a>
+  </footer>
+
+  <!-- AOS init -->
+  <script src="https://unpkg.com/aos@2.3.4/dist/aos.js"></script>
+  <script>
+    AOS.init({ duration: 600, once: true });
+
+    /* ---- Tab switcher ---- */
+    function switchTab(tab) {
+      var unixBtn = document.getElementById('tab-unix');
+      var winBtn = document.getElementById('tab-win');
+      var unixPanel = document.getElementById('panel-unix');
+      var winPanel = document.getElementById('panel-win');
+
+      if (tab === 'unix') {
+        unixBtn.classList.add('active');
+        unixBtn.classList.remove('text-gray-400');
+        winBtn.classList.remove('active');
+        winBtn.classList.add('text-gray-400');
+        unixPanel.classList.remove('hidden');
+        winPanel.classList.add('hidden');
+      } else {
+        winBtn.classList.add('active');
+        winBtn.classList.remove('text-gray-400');
+        unixBtn.classList.remove('active');
+        unixBtn.classList.add('text-gray-400');
+        winPanel.classList.remove('hidden');
+        unixPanel.classList.add('hidden');
+      }
+    }
+
+    /* ---- Copy install command ---- */
+    function copyCmd(tab) {
+      var cmdEl = document.getElementById('cmd-' + tab);
+      var iconEl = document.getElementById('icon-' + tab);
+      var text = cmdEl.textContent.trim();
+
+      var restore = function () {
+        iconEl.classList.remove('fa-solid', 'fa-check');
+        iconEl.classList.add('fa-regular', 'fa-copy');
+        iconEl.style.color = '';
+        var tip = iconEl.parentElement.querySelector('.copy-tip');
+        if (tip) tip.remove();
+      };
+
+      var showSuccess = function () {
+        iconEl.classList.remove('fa-regular', 'fa-copy');
+        iconEl.classList.add('fa-solid', 'fa-check');
+        iconEl.style.color = '#05f140';
+
+        var tip = document.createElement('span');
+        tip.className = 'copy-tip';
+        tip.textContent = 'Copied!';
+        tip.style.cssText = [
+          'position:absolute',
+          'right:2.2rem',
+          'top:50%',
+          'transform:translateY(-50%)',
+          'font-size:0.7rem',
+          'color:#00ACD7',
+          'background:#161b22',
+          'border:1px solid #30363d',
+          'border-radius:4px',
+          'padding:2px 8px',
+          'white-space:nowrap',
+          'pointer-events:none',
+          'font-family:inherit'
+        ].join(';');
+        iconEl.parentElement.style.position = 'relative';
+        iconEl.parentElement.appendChild(tip);
+
+        setTimeout(restore, 1800);
+      };
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(showSuccess).catch(function () {
+          fallbackCopy(cmdEl);
+          showSuccess();
+        });
+      } else {
+        fallbackCopy(cmdEl);
+        showSuccess();
+      }
+    }
+
+    function fallbackCopy(el) {
+      var range = document.createRange();
+      range.selectNode(el);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      try { document.execCommand('copy'); } catch (e) { }
+      window.getSelection().removeAllRanges();
+    }
+  </script>
+
+</body>
+
+</html>
