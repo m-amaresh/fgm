@@ -10,11 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
-
-	"github.com/schollz/progressbar/v3"
 )
 
 func fetchManifest() ([]releaseManifest, error) {
@@ -70,52 +67,11 @@ func downloadFile(url, dest string) error {
 		return fmt.Errorf("create archive: %w", err)
 	}
 
-	max := responseLengthHint(resp)
-	if max <= 0 {
-		max = -1
-	}
-
-	options := []progressbar.Option{
-		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWidth(20),
-		progressbar.OptionSetElapsedTime(false),
-		progressbar.OptionSetPredictTime(false),
-		progressbar.OptionThrottle(65 * time.Millisecond),
-		progressbar.OptionSpinnerType(14),
-		progressbar.OptionFullWidth(),
-		progressbar.OptionSetRenderBlankState(true),
-		progressbar.OptionOnCompletion(func() {
-			_, _ = fmt.Fprint(os.Stderr, "\n")
-		}),
-	}
-	if max > 0 {
-		options = append(options,
-			progressbar.OptionShowTotalBytes(true),
-			progressbar.OptionShowCount(),
-		)
-	}
-
-	bar := progressbar.NewOptions64(max, options...)
-	writer := io.MultiWriter(out, bar)
-
-	if _, err := io.Copy(writer, resp.Body); err != nil {
+	if _, err := io.Copy(out, resp.Body); err != nil {
 		_ = out.Close()
 		return fmt.Errorf("write archive: %w", err)
 	}
 	return out.Close()
-}
-
-func responseLengthHint(resp *http.Response) int64 {
-	if resp.ContentLength > 0 {
-		return resp.ContentLength
-	}
-	if v := resp.Header.Get("X-Identity-Content-Length"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			return n
-		}
-	}
-	return -1
 }
 
 func verifyChecksum(path, expected string) error {

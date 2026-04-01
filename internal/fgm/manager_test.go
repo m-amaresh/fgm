@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -430,48 +429,6 @@ func TestResolveInstalledVersion_ExactNotInstalled(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestResponseLengthHint(t *testing.T) {
-	tests := []struct {
-		name   string
-		resp   *http.Response
-		expect int64
-	}{
-		{
-			name:   "content length",
-			resp:   &http.Response{ContentLength: 123},
-			expect: 123,
-		},
-		{
-			name: "identity content length header",
-			resp: &http.Response{
-				Header: http.Header{"X-Identity-Content-Length": []string{"456"}},
-			},
-			expect: 456,
-		},
-		{
-			name: "invalid header",
-			resp: &http.Response{
-				Header: http.Header{"X-Identity-Content-Length": []string{"abc"}},
-			},
-			expect: -1,
-		},
-		{
-			name:   "missing length",
-			resp:   &http.Response{},
-			expect: -1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := responseLengthHint(tt.resp)
-			if got != tt.expect {
-				t.Fatalf("responseLengthHint() = %d, want %d", got, tt.expect)
-			}
-		})
 	}
 }
 
