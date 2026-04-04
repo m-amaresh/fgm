@@ -15,7 +15,8 @@ var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List installed Go versions",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		manager := getManager(cmd)
 		versions, current, err := manager.List()
 		if err != nil {
 			return err

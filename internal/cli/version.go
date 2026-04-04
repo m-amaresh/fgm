@@ -14,7 +14,7 @@ func init() {
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the fgm version",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		w := cmd.OutOrStdout()
 		if _, err := fmt.Fprintf(w, "version: %s\n", Version); err != nil {
 			return err

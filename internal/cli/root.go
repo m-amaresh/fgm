@@ -1,12 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 
-	"github.com/m-amaresh/fgm/internal/fgm"
-
 	"github.com/spf13/cobra"
+
+	"github.com/m-amaresh/fgm/internal/fgm"
 )
 
 // Set via ldflags at build time.
@@ -16,10 +17,14 @@ var (
 	Date    = "unknown"
 )
 
-var (
-	manager *fgm.Manager
-	verbose bool
-)
+var verbose bool
+
+type managerKey struct{}
+
+// getManager retrieves the Manager from the cobra command context.
+func getManager(cmd *cobra.Command) *fgm.Manager {
+	return cmd.Context().Value(managerKey{}).(*fgm.Manager)
+}
 
 const banner = "" +
 	"\n███████╗ ██████╗ ███╗   ███╗\n" +
@@ -37,26 +42,24 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
+	cobra.EnableTraverseRunHooks = true
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose diagnostic output")
 }
 
-func Execute() error {
+func Execute(ctx context.Context) error {
 	// Use PersistentPreRunE to initialize the manager after flags are parsed,
 	// so the --verbose flag is available.
-	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		if manager != nil {
-			return nil
-		}
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		m, err := fgm.NewManager("", stderrLog)
 		if err != nil {
 			return err
 		}
 		m.Verbose = verbose
-		manager = m
+		cmd.SetContext(context.WithValue(cmd.Context(), managerKey{}, m))
 		return nil
 	}
 
-	return rootCmd.Execute()
+	return rootCmd.ExecuteContext(ctx)
 }
 
 // stderrLog writes manager messages to stderr.

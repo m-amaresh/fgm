@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -281,7 +282,7 @@ func TestAtomicWriteFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "version")
 
-	if err := atomicWriteFile(path, []byte("1.25.5\n"), 0o644); err != nil {
+	if err := atomicWriteFile(path, []byte("1.25.5\n")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -294,7 +295,7 @@ func TestAtomicWriteFile(t *testing.T) {
 	}
 
 	// Overwrite atomically.
-	if err := atomicWriteFile(path, []byte("1.26.0\n"), 0o644); err != nil {
+	if err := atomicWriteFile(path, []byte("1.26.0\n")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	got, _ = os.ReadFile(path)
@@ -307,7 +308,7 @@ func TestAtomicWriteFile(t *testing.T) {
 
 func TestResolveVersion_ExactPassthrough(t *testing.T) {
 	m := &Manager{root: t.TempDir()}
-	v, err := m.ResolveVersion("1.25.5")
+	v, err := m.ResolveVersion(context.Background(), "1.25.5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +319,7 @@ func TestResolveVersion_ExactPassthrough(t *testing.T) {
 
 func TestResolveVersion_InvalidInput(t *testing.T) {
 	m := &Manager{root: t.TempDir()}
-	_, err := m.ResolveVersion("not-a-version")
+	_, err := m.ResolveVersion(context.Background(), "not-a-version")
 	if err == nil {
 		t.Fatal("expected error for invalid version")
 	}
@@ -334,7 +335,7 @@ func TestResolveVersion_Latest(t *testing.T) {
 			{Version: "go1.24.3", Files: nil},
 		},
 	}
-	v, err := m.ResolveVersion("latest")
+	v, err := m.ResolveVersion(context.Background(), "latest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +353,7 @@ func TestResolveVersion_Minor(t *testing.T) {
 			{Version: "go1.24.3", Files: nil},
 		},
 	}
-	v, err := m.ResolveVersion("1.25")
+	v, err := m.ResolveVersion(context.Background(), "1.25")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +369,7 @@ func TestResolveVersion_MinorNotFound(t *testing.T) {
 			{Version: "go1.25.5", Files: nil},
 		},
 	}
-	_, err := m.ResolveVersion("1.99")
+	_, err := m.ResolveVersion(context.Background(), "1.99")
 	if err == nil {
 		t.Fatal("expected error for non-existent minor version")
 	}
@@ -719,9 +720,10 @@ func fileSHA256(t *testing.T, path string) string {
 }
 
 func TestInstall(t *testing.T) {
+	ctx := context.Background()
 	m := newTestManager(t, "1.25.5")
 
-	if err := m.Install("1.25.5"); err != nil {
+	if err := m.Install(ctx, "1.25.5"); err != nil {
 		t.Fatalf("Install failed: %v", err)
 	}
 
@@ -732,15 +734,16 @@ func TestInstall(t *testing.T) {
 	}
 
 	// Installing again should be a no-op.
-	if err := m.Install("1.25.5"); err != nil {
+	if err := m.Install(ctx, "1.25.5"); err != nil {
 		t.Fatalf("second Install failed: %v", err)
 	}
 }
 
 func TestUse(t *testing.T) {
+	ctx := context.Background()
 	m := newTestManager(t, "1.25.5")
 
-	if err := m.Use("1.25.5"); err != nil {
+	if err := m.Use(ctx, "1.25.5"); err != nil {
 		t.Fatalf("Use failed: %v", err)
 	}
 
@@ -767,6 +770,7 @@ func TestUse(t *testing.T) {
 }
 
 func TestCurrent(t *testing.T) {
+	ctx := context.Background()
 	m := newTestManager(t, "1.25.5")
 
 	// No active version initially.
@@ -779,7 +783,7 @@ func TestCurrent(t *testing.T) {
 	}
 
 	// After Use, current should be set.
-	if err := m.Use("1.25.5"); err != nil {
+	if err := m.Use(ctx, "1.25.5"); err != nil {
 		t.Fatal(err)
 	}
 	v, err = m.Current()
@@ -791,7 +795,25 @@ func TestCurrent(t *testing.T) {
 	}
 }
 
+func TestCurrent_LegacySymlinkMissingInstalledVersion(t *testing.T) {
+	m := newTestManager(t, "1.25.5")
+
+	target := m.versionDir("1.24.0")
+	if err := os.Symlink(target, m.currentLink()); err != nil {
+		t.Skipf("symlink unsupported in test environment: %v", err)
+	}
+
+	_, err := m.Current()
+	if err == nil {
+		t.Fatal("expected error for legacy current symlink pointing to missing version")
+	}
+	if !strings.Contains(err.Error(), "current version 1.24.0 is not installed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestList(t *testing.T) {
+	ctx := context.Background()
 	m := newTestManager(t, "1.25.5")
 
 	// Empty before install.
@@ -807,7 +829,7 @@ func TestList(t *testing.T) {
 	}
 
 	// After install+use.
-	if err := m.Use("1.25.5"); err != nil {
+	if err := m.Use(ctx, "1.25.5"); err != nil {
 		t.Fatal(err)
 	}
 	versions, current, err = m.List()
@@ -823,8 +845,9 @@ func TestList(t *testing.T) {
 }
 
 func TestUninstall(t *testing.T) {
+	ctx := context.Background()
 	m := newTestManager(t, "1.25.5")
-	if err := m.Use("1.25.5"); err != nil {
+	if err := m.Use(ctx, "1.25.5"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -856,8 +879,9 @@ func TestUninstall_NotInstalled(t *testing.T) {
 }
 
 func TestUninstall_NonCurrentVersion(t *testing.T) {
+	ctx := context.Background()
 	m := newTestManager(t, "1.25.5")
-	if err := m.Install("1.25.5"); err != nil {
+	if err := m.Install(ctx, "1.25.5"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -867,7 +891,7 @@ func TestUninstall_NonCurrentVersion(t *testing.T) {
 	}
 
 	// Use 1.25.5, then uninstall 1.24.0 — current should remain.
-	if err := m.Use("1.25.5"); err != nil {
+	if err := m.Use(ctx, "1.25.5"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -884,8 +908,9 @@ func TestUninstall_NonCurrentVersion(t *testing.T) {
 // ── Shim content ────────────────────────────────────────────────────
 
 func TestShimContent(t *testing.T) {
+	ctx := context.Background()
 	m := newTestManager(t, "1.25.5")
-	if err := m.Use("1.25.5"); err != nil {
+	if err := m.Use(ctx, "1.25.5"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -902,5 +927,73 @@ func TestShimContent(t *testing.T) {
 	}
 	if !strings.Contains(shimStr, "fgm") {
 		t.Error("shim does not reference fgm")
+	}
+}
+
+// ── Prune ───────────────────────────────────────────────────────────
+
+func TestPrune(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t, "1.25.5")
+
+	// Install so there's a cached archive.
+	if err := m.Install(ctx, "1.25.5"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Downloads dir should have the archive.
+	entries, _ := os.ReadDir(m.downloadsDir())
+	if len(entries) == 0 {
+		t.Fatal("expected cached archive after install")
+	}
+
+	removed, bytes, err := m.Prune()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed == 0 {
+		t.Fatal("expected prune to remove files")
+	}
+	if bytes == 0 {
+		t.Fatal("expected prune to report freed bytes")
+	}
+
+	// Downloads dir should be empty.
+	entries, _ = os.ReadDir(m.downloadsDir())
+	if len(entries) != 0 {
+		t.Fatalf("expected downloads dir to be empty after prune, got %d entries", len(entries))
+	}
+
+	// Installed version should still exist.
+	if !m.isInstalled("1.25.5") {
+		t.Fatal("prune should not remove installed versions")
+	}
+}
+
+func TestPrune_NothingToRemove(t *testing.T) {
+	m := &Manager{root: t.TempDir(), log: func(string, ...any) {}}
+	removed, bytes, err := m.Prune()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 || bytes != 0 {
+		t.Fatalf("expected nothing to prune, got removed=%d bytes=%d", removed, bytes)
+	}
+}
+
+// ── List without existing directory ─────────────────────────────────
+
+func TestList_NoVersionsDir(t *testing.T) {
+	m := &Manager{root: t.TempDir(), log: func(string, ...any) {}}
+	// Don't create any directories — List should return empty, not error.
+	versions, current, err := m.List()
+	if err != nil {
+		t.Fatalf("List() on fresh root should not error: %v", err)
+	}
+	if len(versions) != 0 {
+		t.Fatalf("expected empty list, got %v", versions)
+	}
+	if current != "" {
+		t.Fatalf("expected empty current, got %q", current)
 	}
 }

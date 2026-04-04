@@ -17,11 +17,13 @@ var useCmd = &cobra.Command{
 	Long:  "Install if needed, then activate a Go version. Accepts exact (1.25.5), minor (1.25), or \"latest\".",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		version, err := manager.ResolveVersion(args[0])
+		ctx := cmd.Context()
+		manager := getManager(cmd)
+		version, err := manager.ResolveVersion(ctx, args[0])
 		if err != nil {
 			return err
 		}
-		if err := manager.Use(version); err != nil {
+		if err := manager.Use(ctx, version); err != nil {
 			return err
 		}
 		green := color.New(color.Bold, color.FgGreen).SprintFunc()

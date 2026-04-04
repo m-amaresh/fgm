@@ -1,6 +1,7 @@
 package fgm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,9 +90,9 @@ func (m *Manager) Root() string { return m.root }
 // ResolveVersion resolves "latest", minor versions (e.g. "1.25"), and exact
 // versions to a concrete Go version string. The result is always a full
 // version like "1.25.5".
-func (m *Manager) ResolveVersion(input string) (string, error) {
+func (m *Manager) ResolveVersion(ctx context.Context, input string) (string, error) {
 	if input == "latest" {
-		releases, err := m.manifest()
+		releases, err := m.manifest(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -118,7 +119,7 @@ func (m *Manager) ResolveVersion(input string) (string, error) {
 	if err := validateVersion(input); err != nil {
 		return "", err
 	}
-	releases, err := m.manifest()
+	releases, err := m.manifest(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -172,7 +173,7 @@ func (m *Manager) ResolveInstalledVersion(input string) (string, error) {
 	return "", fmt.Errorf("no installed version found matching %q", input)
 }
 
-func (m *Manager) Install(version string) error {
+func (m *Manager) Install(ctx context.Context, version string) error {
 	if err := validateVersion(version); err != nil {
 		return err
 	}
@@ -187,7 +188,7 @@ func (m *Manager) Install(version string) error {
 	}
 
 	m.log("Resolving go %s...", version)
-	spec, err := m.resolveArchive(version)
+	spec, err := m.resolveArchive(ctx, version)
 	if err != nil {
 		return err
 	}
@@ -199,7 +200,7 @@ func (m *Manager) Install(version string) error {
 	m.logv("archive path: %s", archivePath)
 	if _, err := os.Stat(archivePath); errors.Is(err, os.ErrNotExist) {
 		m.log("Downloading %s...", spec.filename)
-		if err := downloadFile(spec.url, archivePath); err != nil {
+		if err := downloadFile(ctx, spec.url, archivePath); err != nil {
 			_ = os.Remove(archivePath) // clean up partial download
 			return err
 		}
@@ -245,14 +246,14 @@ func (m *Manager) Install(version string) error {
 	return nil
 }
 
-func (m *Manager) Use(version string) error {
-	if err := m.Install(version); err != nil {
+func (m *Manager) Use(ctx context.Context, version string) error {
+	if err := m.Install(ctx, version); err != nil {
 		return err
 	}
 	if err := m.installShims(); err != nil {
 		return err
 	}
-	if err := atomicWriteFile(m.currentVersionFile(), []byte(version+"\n"), 0o644); err != nil {
+	if err := atomicWriteFile(m.currentVersionFile(), []byte(version+"\n")); err != nil {
 		return fmt.Errorf("write current version: %w", err)
 	}
 	return nil
@@ -312,7 +313,15 @@ func (m *Manager) Current() (string, error) {
 	target, err := filepath.EvalSymlinks(m.currentLink())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", nil
+			linkTarget, readErr := os.Readlink(m.currentLink())
+			if errors.Is(readErr, os.ErrNotExist) {
+				return "", nil
+			}
+			if readErr != nil {
+				return "", fmt.Errorf("resolve current version: %w", err)
+			}
+			version := filepath.Base(linkTarget)
+			return "", fmt.Errorf("current version %s is not installed", version)
 		}
 		return "", fmt.Errorf("resolve current version: %w", err)
 	}
@@ -320,16 +329,15 @@ func (m *Manager) Current() (string, error) {
 	if m.isInstalled(version) {
 		return version, nil
 	}
-	return "", nil
+	return "", fmt.Errorf("current version %s is not installed", version)
 }
 
 func (m *Manager) List() ([]string, string, error) {
-	if err := m.ensureLayout(); err != nil {
-		return nil, "", err
-	}
-
 	entries, err := os.ReadDir(m.versionsDir())
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "", nil
+		}
 		return nil, "", fmt.Errorf("read versions dir: %w", err)
 	}
 
@@ -346,6 +354,43 @@ func (m *Manager) List() ([]string, string, error) {
 		return nil, "", err
 	}
 	return versions, current, nil
+}
+
+// Prune removes cached downloads and the manifest cache. It returns the
+// number of files removed and total bytes freed.
+func (m *Manager) Prune() (int, int64, error) {
+	var removed int
+	var freedBytes int64
+
+	// Remove cached archive downloads.
+	entries, err := os.ReadDir(m.downloadsDir())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return 0, 0, fmt.Errorf("read downloads dir: %w", err)
+	}
+	for _, e := range entries {
+		path := filepath.Join(m.downloadsDir(), e.Name())
+		if info, err := e.Info(); err == nil {
+			freedBytes += info.Size()
+		}
+		if err := os.Remove(path); err != nil {
+			return removed, freedBytes, fmt.Errorf("remove %s: %w", e.Name(), err)
+		}
+		removed++
+	}
+
+	// Always clear the in-memory manifest so subsequent calls re-fetch.
+	m.cachedManifest = nil
+
+	// Remove manifest cache from disk.
+	if info, err := os.Stat(m.manifestCachePath()); err == nil {
+		freedBytes += info.Size()
+		if err := os.Remove(m.manifestCachePath()); err != nil {
+			return removed, freedBytes, fmt.Errorf("remove manifest cache: %w", err)
+		}
+		removed++
+	}
+
+	return removed, freedBytes, nil
 }
 
 func (m *Manager) ensureLayout() error {
@@ -476,8 +521,8 @@ func isStableVersion(version string) bool {
 	return version != ""
 }
 
-func (m *Manager) resolveArchive(version string) (archiveSpec, error) {
-	releases, err := m.manifest()
+func (m *Manager) resolveArchive(ctx context.Context, version string) (archiveSpec, error) {
+	releases, err := m.manifest(ctx)
 	if err != nil {
 		return archiveSpec{}, err
 	}
@@ -514,7 +559,7 @@ func (m *Manager) manifestCachePath() string {
 	return filepath.Join(m.root, "manifest-cache.json")
 }
 
-func (m *Manager) manifest() ([]releaseManifest, error) {
+func (m *Manager) manifest(ctx context.Context) ([]releaseManifest, error) {
 	if m.cachedManifest != nil {
 		return m.cachedManifest, nil
 	}
@@ -534,7 +579,7 @@ func (m *Manager) manifest() ([]releaseManifest, error) {
 	}
 
 	m.logv("fetching manifest from %s", manifestURL)
-	releases, err := fetchManifest()
+	releases, err := fetchManifest(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -544,7 +589,7 @@ func (m *Manager) manifest() ([]releaseManifest, error) {
 	cache := manifestDiskCache{FetchedAt: time.Now(), Releases: releases}
 	if data, err := json.Marshal(cache); err == nil {
 		_ = os.MkdirAll(m.root, 0o755)
-		_ = atomicWriteFile(m.manifestCachePath(), data, 0o644)
+		_ = atomicWriteFile(m.manifestCachePath(), data)
 	}
 
 	return releases, nil

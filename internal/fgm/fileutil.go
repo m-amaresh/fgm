@@ -72,7 +72,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 // atomicWriteFile writes data to a temp file in the same directory and renames
 // it to path, ensuring the file is never partially written.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+func atomicWriteFile(path string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
 		return err
@@ -93,7 +93,7 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
-	if err := os.Chmod(tmpName, perm); err != nil {
+	if err := os.Chmod(tmpName, 0o644); err != nil {
 		_ = os.Remove(tmpName)
 		return err
 	}

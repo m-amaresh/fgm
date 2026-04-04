@@ -1,6 +1,7 @@
 package fgm
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ func newRealManager(t *testing.T) *Manager {
 	t.Helper()
 	root := t.TempDir()
 	var logs []string
-	m, err := NewManager(root, func(format string, args ...any) {
+	m, err := NewManager(root, func(format string, _ ...any) {
 		// Collect logs for verbose verification.
 		logs = append(logs, format)
 	})
@@ -41,8 +42,9 @@ func newRealManager(t *testing.T) *Manager {
 func TestIntegration_ManifestFetch(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
-	releases, err := m.manifest()
+	releases, err := m.manifest(ctx)
 	if err != nil {
 		t.Fatalf("manifest fetch failed: %v", err)
 	}
@@ -69,10 +71,11 @@ func TestIntegration_ManifestFetch(t *testing.T) {
 func TestIntegration_ManifestCache(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
 
 	// First call fetches from network.
-	r1, err := m.manifest()
+	r1, err := m.manifest(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +87,7 @@ func TestIntegration_ManifestCache(t *testing.T) {
 	}
 
 	// Second call should use in-memory cache (same pointer).
-	r2, err := m.manifest()
+	r2, err := m.manifest(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +97,7 @@ func TestIntegration_ManifestCache(t *testing.T) {
 
 	// New manager should load from disk cache.
 	m2, _ := NewManager(m.Root(), nil)
-	r3, err := m2.manifest()
+	r3, err := m2.manifest(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +111,9 @@ func TestIntegration_ManifestCache(t *testing.T) {
 func TestIntegration_ResolveLatest(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
-	v, err := m.ResolveVersion("latest")
+	v, err := m.ResolveVersion(ctx, "latest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,8 +129,9 @@ func TestIntegration_ResolveLatest(t *testing.T) {
 func TestIntegration_ResolveMinor(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
-	v, err := m.ResolveVersion("1.21")
+	v, err := m.ResolveVersion(ctx, "1.21")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,10 +146,11 @@ func TestIntegration_ResolveMinor(t *testing.T) {
 func TestIntegration_InstallAndUse(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
 
 	// Install a real Go version.
-	if err := m.Install(testVersion); err != nil {
+	if err := m.Install(ctx, testVersion); err != nil {
 		t.Fatalf("Install(%s) failed: %v", testVersion, err)
 	}
 
@@ -168,7 +174,7 @@ func TestIntegration_InstallAndUse(t *testing.T) {
 	}
 
 	// Use it.
-	if err := m.Use(testVersion); err != nil {
+	if err := m.Use(ctx, testVersion); err != nil {
 		t.Fatalf("Use(%s) failed: %v", testVersion, err)
 	}
 
@@ -216,9 +222,10 @@ func TestIntegration_InstallAndUse(t *testing.T) {
 func TestIntegration_InstallAlreadyInstalled(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
 
-	if err := m.Install(testVersion); err != nil {
+	if err := m.Install(ctx, testVersion); err != nil {
 		t.Fatal(err)
 	}
 
@@ -227,7 +234,7 @@ func TestIntegration_InstallAlreadyInstalled(t *testing.T) {
 	info1, _ := os.Stat(goBin)
 
 	// Install again — should be a no-op, not re-extract.
-	if err := m.Install(testVersion); err != nil {
+	if err := m.Install(ctx, testVersion); err != nil {
 		t.Fatal(err)
 	}
 
@@ -242,9 +249,10 @@ func TestIntegration_InstallAlreadyInstalled(t *testing.T) {
 func TestIntegration_DownloadCacheReuse(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
 
-	if err := m.Install(testVersion); err != nil {
+	if err := m.Install(ctx, testVersion); err != nil {
 		t.Fatal(err)
 	}
 
@@ -261,7 +269,7 @@ func TestIntegration_DownloadCacheReuse(t *testing.T) {
 	if err := m.Uninstall(testVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Install(testVersion); err != nil {
+	if err := m.Install(ctx, testVersion); err != nil {
 		t.Fatal(err)
 	}
 
@@ -276,10 +284,11 @@ func TestIntegration_DownloadCacheReuse(t *testing.T) {
 func TestIntegration_SwitchVersions(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
 
 	// Install and use first version.
-	if err := m.Use(testVersion); err != nil {
+	if err := m.Use(ctx, testVersion); err != nil {
 		t.Fatalf("Use(%s) failed: %v", testVersion, err)
 	}
 
@@ -289,7 +298,7 @@ func TestIntegration_SwitchVersions(t *testing.T) {
 	}
 
 	// Install and switch to second version.
-	if err := m.Use(testVersionAlt); err != nil {
+	if err := m.Use(ctx, testVersionAlt); err != nil {
 		t.Fatalf("Use(%s) failed: %v", testVersionAlt, err)
 	}
 
@@ -308,7 +317,7 @@ func TestIntegration_SwitchVersions(t *testing.T) {
 	}
 
 	// Switch back.
-	if err := m.Use(testVersion); err != nil {
+	if err := m.Use(ctx, testVersion); err != nil {
 		t.Fatal(err)
 	}
 	cur, _ = m.Current()
@@ -322,8 +331,9 @@ func TestIntegration_SwitchVersions(t *testing.T) {
 func TestIntegration_UninstallCurrent(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
-	if err := m.Use(testVersion); err != nil {
+	if err := m.Use(ctx, testVersion); err != nil {
 		t.Fatal(err)
 	}
 
@@ -349,11 +359,12 @@ func TestIntegration_UninstallCurrent(t *testing.T) {
 func TestIntegration_UninstallNonCurrent(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
-	if err := m.Use(testVersion); err != nil {
+	if err := m.Use(ctx, testVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Install(testVersionAlt); err != nil {
+	if err := m.Install(ctx, testVersionAlt); err != nil {
 		t.Fatal(err)
 	}
 
@@ -392,8 +403,9 @@ func TestIntegration_UninstallNotInstalled(t *testing.T) {
 func TestIntegration_TmpCleanedAfterInstall(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
-	if err := m.Install(testVersion); err != nil {
+	if err := m.Install(ctx, testVersion); err != nil {
 		t.Fatal(err)
 	}
 
@@ -409,6 +421,7 @@ func TestIntegration_TmpCleanedAfterInstall(t *testing.T) {
 func TestIntegration_VerboseOutput(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	root := t.TempDir()
 	var logs []string
 	m, _ := NewManager(root, func(format string, args ...any) {
@@ -417,7 +430,7 @@ func TestIntegration_VerboseOutput(t *testing.T) {
 	})
 	m.Verbose = true
 
-	if err := m.Install(testVersion); err != nil {
+	if err := m.Install(ctx, testVersion); err != nil {
 		t.Fatal(err)
 	}
 
@@ -447,10 +460,11 @@ func TestIntegration_VerboseOutput(t *testing.T) {
 func TestIntegration_ChecksumActuallyVerified(t *testing.T) {
 	skipIfShort(t)
 
+	ctx := context.Background()
 	m := newRealManager(t)
 
 	// Install normally to get the archive.
-	if err := m.Install(testVersion); err != nil {
+	if err := m.Install(ctx, testVersion); err != nil {
 		t.Fatal(err)
 	}
 
@@ -477,7 +491,7 @@ func TestIntegration_ChecksumActuallyVerified(t *testing.T) {
 	}
 
 	// Install should fail due to checksum mismatch.
-	err = m.Install(testVersion)
+	err = m.Install(ctx, testVersion)
 	if err == nil {
 		t.Fatal("expected checksum error with corrupted archive")
 	}
