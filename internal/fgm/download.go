@@ -15,6 +15,31 @@ import (
 	"time"
 )
 
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func canceledErr(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return err
+}
+
+func (r *ctxReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.r.Read(p)
+	if err == nil {
+		if ctxErr := r.ctx.Err(); ctxErr != nil {
+			return n, ctxErr
+		}
+	}
+	return n, err
+}
+
 func fetchManifest(ctx context.Context) ([]releaseManifest, error) {
 	client := &http.Client{Timeout: 2 * time.Minute}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
@@ -23,7 +48,7 @@ func fetchManifest(ctx context.Context) ([]releaseManifest, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch Go downloads manifest: %w", err)
+		return nil, fmt.Errorf("fetch Go downloads manifest: %w", canceledErr(ctx, err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -35,7 +60,7 @@ func fetchManifest(ctx context.Context) ([]releaseManifest, error) {
 	const maxManifestSize = 32 << 20
 	var releases []releaseManifest
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestSize)).Decode(&releases); err != nil {
-		return nil, fmt.Errorf("decode Go downloads manifest: %w", err)
+		return nil, fmt.Errorf("decode Go downloads manifest: %w", canceledErr(ctx, err))
 	}
 	return releases, nil
 }
@@ -65,7 +90,7 @@ func downloadFile(ctx context.Context, url, dest string) error {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("download %s: %w", url, err)
+		return fmt.Errorf("download %s: %w", url, canceledErr(ctx, err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -86,7 +111,7 @@ func downloadFile(ctx context.Context, url, dest string) error {
 		return fmt.Errorf("close archive: %w", closeErr)
 	}
 	if copyErr != nil {
-		return fmt.Errorf("write archive: %w", copyErr)
+		return fmt.Errorf("write archive: %w", canceledErr(ctx, copyErr))
 	}
 	if n > maxDownloadSize {
 		_ = os.Remove(dest)
@@ -95,7 +120,7 @@ func downloadFile(ctx context.Context, url, dest string) error {
 	return nil
 }
 
-func verifyChecksum(path, expected string) error {
+func verifyChecksum(ctx context.Context, path, expected string) error {
 	if expected == "" {
 		return fmt.Errorf("missing checksum for %s", filepath.Base(path))
 	}
@@ -107,8 +132,8 @@ func verifyChecksum(path, expected string) error {
 	defer func() { _ = file.Close() }()
 
 	sum := sha256.New()
-	if _, err := io.Copy(sum, file); err != nil {
-		return fmt.Errorf("hash archive: %w", err)
+	if _, err := io.Copy(sum, &ctxReader{ctx: ctx, r: file}); err != nil {
+		return fmt.Errorf("hash archive: %w", canceledErr(ctx, err))
 	}
 
 	actual := hex.EncodeToString(sum.Sum(nil))

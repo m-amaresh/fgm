@@ -35,9 +35,11 @@ const banner = "" +
 	"╚═╝      ╚═════╝ ╚═╝     ╚═╝"
 
 var rootCmd = &cobra.Command{
-	Use:   "fgm",
-	Short: "Fast Go Manager – install and switch Go versions in seconds",
-	Long:  banner,
+	Use:           "fgm",
+	Short:         "Fast Go Manager – install and switch Go versions in seconds",
+	Long:          banner,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 func init() {

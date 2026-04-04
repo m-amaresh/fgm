@@ -209,10 +209,16 @@ func (m *Manager) Install(ctx context.Context, version string) error {
 	} else {
 		m.logv("using cached archive: %s", archivePath)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	m.log("Verifying checksum...")
-	if err := verifyChecksum(archivePath, spec.sha256); err != nil {
+	if err := verifyChecksum(ctx, archivePath, spec.sha256); err != nil {
 		_ = os.Remove(archivePath)
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -228,7 +234,10 @@ func (m *Manager) Install(ctx context.Context, version string) error {
 	if err := os.MkdirAll(extractRoot, 0o755); err != nil {
 		return fmt.Errorf("create extract dir: %w", err)
 	}
-	if err := extractArchive(archivePath, extractRoot, spec.ext); err != nil {
+	if err := extractArchive(ctx, archivePath, extractRoot, spec.ext); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -28,25 +29,49 @@ func sanitizePath(dest, name string) (string, error) {
 	return target, nil
 }
 
-func extractArchive(archivePath, dest, ext string) error {
+func extractArchive(ctx context.Context, archivePath, dest, ext string) error {
 	switch ext {
 	case ".tar.gz":
-		return extractTarGz(archivePath, dest)
+		return extractTarGz(ctx, archivePath, dest)
 	case ".zip":
-		return extractZip(archivePath, dest)
+		return extractZip(ctx, archivePath, dest)
 	default:
 		return fmt.Errorf("unsupported archive type %q", ext)
 	}
 }
 
-func extractTarGz(archivePath, dest string) error {
+func extractTarFile(ctx context.Context, tr *tar.Reader, header *tar.Header, target string, totalWritten int64) (int64, error) {
+	if header.Size > maxExtractSize || totalWritten+header.Size > maxExtractSize {
+		return totalWritten, fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractSize)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return totalWritten, fmt.Errorf("create file dir %s: %w", target, err)
+	}
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode&0o7777))
+	if err != nil {
+		return totalWritten, fmt.Errorf("create file %s: %w", target, err)
+	}
+	n, copyErr := io.Copy(out, io.LimitReader(&ctxReader{ctx: ctx, r: tr}, header.Size+1))
+	if closeErr := out.Close(); closeErr != nil && copyErr == nil {
+		return totalWritten, fmt.Errorf("close file %s: %w", target, closeErr)
+	}
+	if copyErr != nil {
+		return totalWritten, fmt.Errorf("write file %s: %w", target, canceledErr(ctx, copyErr))
+	}
+	if n > header.Size {
+		return totalWritten, fmt.Errorf("entry %s wrote more bytes than declared size", header.Name)
+	}
+	return totalWritten + n, nil
+}
+
+func extractTarGz(ctx context.Context, archivePath, dest string) error {
 	file, err := os.Open(archivePath)
 	if err != nil {
 		return fmt.Errorf("open archive: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 
-	gzr, err := gzip.NewReader(file)
+	gzr, err := gzip.NewReader(&ctxReader{ctx: ctx, r: file})
 	if err != nil {
 		return fmt.Errorf("read gzip stream: %w", err)
 	}
@@ -55,12 +80,15 @@ func extractTarGz(archivePath, dest string) error {
 	tr := tar.NewReader(gzr)
 	var totalWritten int64
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("read tar entry: %w", err)
+			return fmt.Errorf("read tar entry: %w", canceledErr(ctx, err))
 		}
 
 		target, err := sanitizePath(dest, header.Name)
@@ -80,27 +108,10 @@ func extractTarGz(archivePath, dest string) error {
 				return fmt.Errorf("create dir %s: %w", target, err)
 			}
 		case tar.TypeReg:
-			if header.Size > maxExtractSize || totalWritten+header.Size > maxExtractSize {
-				return fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractSize)
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return fmt.Errorf("create file dir %s: %w", target, err)
-			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode&0o7777))
+			totalWritten, err = extractTarFile(ctx, tr, header, target, totalWritten)
 			if err != nil {
-				return fmt.Errorf("create file %s: %w", target, err)
+				return err
 			}
-			n, copyErr := io.Copy(out, io.LimitReader(tr, header.Size+1))
-			if closeErr := out.Close(); closeErr != nil && copyErr == nil {
-				return fmt.Errorf("close file %s: %w", target, closeErr)
-			}
-			if copyErr != nil {
-				return fmt.Errorf("write file %s: %w", target, copyErr)
-			}
-			if n > header.Size {
-				return fmt.Errorf("entry %s wrote more bytes than declared size", header.Name)
-			}
-			totalWritten += n
 		case tar.TypeSymlink, tar.TypeLink:
 			// Official Go archives never contain symlinks or hard links.
 			// Skip these entry types to eliminate any symlink-based attack
@@ -112,7 +123,7 @@ func extractTarGz(archivePath, dest string) error {
 	}
 }
 
-func extractZip(archivePath, dest string) error {
+func extractZip(ctx context.Context, archivePath, dest string) error {
 	reader, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return fmt.Errorf("open zip archive: %w", err)
@@ -121,7 +132,10 @@ func extractZip(archivePath, dest string) error {
 
 	var totalWritten int64
 	for _, file := range reader.File {
-		n, err := extractZipEntry(file, dest, totalWritten)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, err := extractZipEntry(ctx, file, dest, totalWritten)
 		if err != nil {
 			return err
 		}
@@ -131,7 +145,7 @@ func extractZip(archivePath, dest string) error {
 	return nil
 }
 
-func extractZipEntry(file *zip.File, dest string, totalWritten int64) (int64, error) {
+func extractZipEntry(ctx context.Context, file *zip.File, dest string, totalWritten int64) (int64, error) {
 	target, err := sanitizePath(dest, file.Name)
 	if err != nil {
 		return 0, err
@@ -165,12 +179,12 @@ func extractZipEntry(file *zip.File, dest string, totalWritten int64) (int64, er
 		return 0, fmt.Errorf("create file %s: %w", target, err)
 	}
 
-	n, copyErr := io.Copy(out, io.LimitReader(in, size+1))
+	n, copyErr := io.Copy(out, io.LimitReader(&ctxReader{ctx: ctx, r: in}, size+1))
 	if closeErr := out.Close(); closeErr != nil && copyErr == nil {
 		return 0, fmt.Errorf("close file %s: %w", target, closeErr)
 	}
 	if copyErr != nil {
-		return 0, fmt.Errorf("write file %s: %w", target, copyErr)
+		return 0, fmt.Errorf("write file %s: %w", target, canceledErr(ctx, copyErr))
 	}
 	if n > size {
 		return 0, fmt.Errorf("entry %s wrote more bytes than declared size", file.Name)

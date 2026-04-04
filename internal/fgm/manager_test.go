@@ -171,7 +171,7 @@ func TestExtractTarGz_SkipsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := extractTarGz(archivePath, dest); err != nil {
+	if err := extractTarGz(context.Background(), archivePath, dest); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -224,7 +224,7 @@ func TestExtractTarGz_NormalArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := extractTarGz(archivePath, dest); err != nil {
+	if err := extractTarGz(context.Background(), archivePath, dest); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -263,7 +263,7 @@ func TestExtractZip_NormalArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := extractZip(archivePath, dest); err != nil {
+	if err := extractZip(context.Background(), archivePath, dest); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
