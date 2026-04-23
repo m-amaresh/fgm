@@ -14,16 +14,20 @@ var currentCmd = &cobra.Command{
 	Use:   "current",
 	Short: "Show the active Go version",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		manager := getManager(cmd)
+		manager, err := getManager(cmd)
+		if err != nil {
+			return err
+		}
 		version, err := manager.Current()
 		if err != nil {
 			return err
 		}
+		w := cmd.OutOrStdout()
 		if version == "" {
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "no active Go version")
-			return err
+			fmt.Fprintln(w, "no active Go version")
+			return nil
 		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), version)
-		return err
+		fmt.Fprintln(w, version)
+		return nil
 	},
 }

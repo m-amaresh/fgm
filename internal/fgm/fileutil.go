@@ -1,6 +1,7 @@
 package fgm
 
 import (
+	"cmp"
 	"errors"
 	"io"
 	"os"
@@ -24,6 +25,8 @@ func moveDir(src, dst string) error {
 }
 
 func copyDir(src, dst string) error {
+	// Source is always a freshly-extracted Go toolchain whose symlink/hardlink
+	// entries were skipped by extractArchive — so no symlinks reach this point.
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -34,19 +37,9 @@ func copyDir(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 
-		// filepath.Walk uses Lstat — info has ModeSymlink for symlinks.
-		if info.Mode()&os.ModeSymlink != 0 {
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(link, target)
-		}
-
 		if info.IsDir() {
 			return os.MkdirAll(target, info.Mode())
 		}
-
 		return copyFile(path, target, info.Mode())
 	})
 }
@@ -103,7 +96,8 @@ func atomicWriteFile(path string, data []byte) error {
 func compareVersions(a, b string) int {
 	partsA := strings.Split(a, ".")
 	partsB := strings.Split(b, ".")
-	for i := 0; i < len(partsA) || i < len(partsB); i++ {
+	n := max(len(partsA), len(partsB))
+	for i := range n {
 		var na, nb int
 		if i < len(partsA) {
 			na, _ = strconv.Atoi(partsA[i])
@@ -111,8 +105,8 @@ func compareVersions(a, b string) int {
 		if i < len(partsB) {
 			nb, _ = strconv.Atoi(partsB[i])
 		}
-		if na != nb {
-			return na - nb
+		if c := cmp.Compare(na, nb); c != 0 {
+			return c
 		}
 	}
 	return 0

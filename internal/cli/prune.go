@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
@@ -16,17 +15,20 @@ var pruneCmd = &cobra.Command{
 	Short: "Remove cached downloads and manifest",
 	Long:  "Remove cached archive downloads and the manifest cache to free disk space.",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		manager := getManager(cmd)
+		manager, err := getManager(cmd)
+		if err != nil {
+			return err
+		}
 		removed, bytes, err := manager.Prune()
 		if err != nil {
 			return err
 		}
+		w := cmd.OutOrStdout()
 		if removed == 0 {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Nothing to prune.")
+			fmt.Fprintln(w, "Nothing to prune.")
 			return nil
 		}
-		green := color.New(color.Bold, color.FgGreen).SprintFunc()
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s Removed %d cached file(s) (%.1f MB)\n",
+		fmt.Fprintf(w, "%s Removed %d cached file(s) (%.1f MB)\n",
 			green("✓"), removed, float64(bytes)/(1<<20))
 		return nil
 	},

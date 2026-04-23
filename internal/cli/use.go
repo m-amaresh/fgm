@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +17,10 @@ var useCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		manager := getManager(cmd)
+		manager, err := getManager(cmd)
+		if err != nil {
+			return err
+		}
 		version, err := manager.ResolveVersion(ctx, args[0])
 		if err != nil {
 			return err
@@ -26,8 +28,7 @@ var useCmd = &cobra.Command{
 		if err := manager.Use(ctx, version); err != nil {
 			return err
 		}
-		green := color.New(color.Bold, color.FgGreen).SprintFunc()
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s Using go %s\n", green("✓"), version)
+		fmt.Fprintf(cmd.OutOrStdout(), "%s Using go %s\n", green("✓"), version)
 		return nil
 	},
 }
