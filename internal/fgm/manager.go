@@ -286,11 +286,10 @@ func (m *Manager) Uninstall(version string) error {
 		return fmt.Errorf("go %s is not installed", version)
 	}
 
-	current, err := m.Current()
-	if err != nil {
-		return err
-	}
-	if current == version {
+	// Compare raw marker contents instead of routing through Current(), which
+	// errors when the marker points to a missing version — exactly the broken
+	// state uninstall is most likely to be cleaning up.
+	if m.markerPointsTo(version) {
 		if err := m.deactivateCurrent(); err != nil {
 			return err
 		}
@@ -327,7 +326,7 @@ func (m *Manager) Current() (string, error) {
 				return "", nil
 			}
 			if readErr != nil {
-				return "", fmt.Errorf("resolve current version: %w", err)
+				return "", fmt.Errorf("resolve current version: %w", readErr)
 			}
 			version := filepath.Base(linkTarget)
 			return "", fmt.Errorf("current version %s is not installed", version)
@@ -352,9 +351,15 @@ func (m *Manager) List() ([]string, string, error) {
 
 	versions := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() {
-			versions = append(versions, entry.Name())
+		if !entry.IsDir() {
+			continue
 		}
+		// Only include directories whose name is a valid Go version. This
+		// keeps stray directories from showing up as bogus "0.0.0" entries.
+		if validateVersion(entry.Name()) != nil {
+			continue
+		}
+		versions = append(versions, entry.Name())
 	}
 	slices.SortFunc(versions, compareVersions)
 
@@ -425,6 +430,23 @@ func (m *Manager) cleanStaleTmp() {
 	}
 }
 
+// markerPointsTo reports whether either the current-version file or the
+// legacy current symlink names the given version, regardless of whether
+// the pointed-to version is still installed.
+func (m *Manager) markerPointsTo(version string) bool {
+	if data, err := os.ReadFile(m.currentVersionFile()); err == nil {
+		if strings.TrimSpace(string(data)) == version {
+			return true
+		}
+	}
+	if target, err := os.Readlink(m.currentLink()); err == nil {
+		if filepath.Base(target) == version {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Manager) deactivateCurrent() error {
 	if err := removePath(m.currentVersionFile()); err != nil {
 		return fmt.Errorf("remove current version file: %w", err)
@@ -434,6 +456,9 @@ func (m *Manager) deactivateCurrent() error {
 	}
 	return nil
 }
+
+// IsInstalled reports whether the given Go version directory exists locally.
+func (m *Manager) IsInstalled(version string) bool { return m.isInstalled(version) }
 
 func (m *Manager) isInstalled(version string) bool {
 	info, err := os.Stat(m.versionDir(version))
@@ -573,33 +598,61 @@ func (m *Manager) manifest(ctx context.Context) ([]releaseManifest, error) {
 		return m.cachedManifest, nil
 	}
 
-	// Try disk cache.
-	if data, err := os.ReadFile(m.manifestCachePath()); err == nil {
-		var cache manifestDiskCache
-		if err := json.Unmarshal(data, &cache); err == nil {
-			age := time.Since(cache.FetchedAt)
-			if age < manifestCacheTTL && len(cache.Releases) > 0 {
-				m.logv("manifest cache hit (age: %s, %d releases)", age.Round(time.Second), len(cache.Releases))
-				m.cachedManifest = cache.Releases
-				return cache.Releases, nil
-			}
-			m.logv("manifest cache expired (age: %s)", age.Round(time.Second))
+	diskCache := m.loadManifestCache()
+	if diskCache != nil && len(diskCache.Releases) > 0 {
+		age := time.Since(diskCache.FetchedAt)
+		if age >= 0 && age < manifestCacheTTL {
+			m.logv("manifest cache hit (age: %s, %d releases)", age.Round(time.Second), len(diskCache.Releases))
+			m.cachedManifest = diskCache.Releases
+			return diskCache.Releases, nil
 		}
+		m.logv("manifest cache expired (age: %s)", age.Round(time.Second))
 	}
 
 	m.logv("fetching manifest from %s", manifestURL)
 	releases, err := fetchManifest(ctx)
 	if err != nil {
+		// Offline / fetch failure: fall back to stale disk cache if we have one.
+		if diskCache != nil && len(diskCache.Releases) > 0 {
+			m.log("warning: using stale manifest cache (fetch failed: %v)", err)
+			m.cachedManifest = diskCache.Releases
+			return diskCache.Releases, nil
+		}
 		return nil, err
 	}
 	m.cachedManifest = releases
-
-	// Best-effort write to disk cache.
-	cache := manifestDiskCache{FetchedAt: time.Now(), Releases: releases}
-	if data, err := json.Marshal(cache); err == nil {
-		_ = os.MkdirAll(m.root, 0o755)
-		_ = atomicWriteFile(m.manifestCachePath(), data)
-	}
-
+	m.storeManifestCache(releases)
 	return releases, nil
+}
+
+// loadManifestCache reads and parses the on-disk manifest cache. Returns nil
+// on any error (cache absent or unreadable is not fatal).
+func (m *Manager) loadManifestCache() *manifestDiskCache {
+	data, err := os.ReadFile(m.manifestCachePath())
+	if err != nil {
+		return nil
+	}
+	var cache manifestDiskCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return nil
+	}
+	return &cache
+}
+
+// storeManifestCache writes the manifest to disk. Best-effort; errors are logged
+// at verbose level only.
+func (m *Manager) storeManifestCache(releases []releaseManifest) {
+	cache := manifestDiskCache{FetchedAt: time.Now(), Releases: releases}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		m.logv("marshal manifest cache: %v", err)
+		return
+	}
+	if err := os.MkdirAll(m.root, 0o755); err != nil {
+		m.logv("create root for manifest cache: %v", err)
+		return
+	}
+	if err := atomicWriteFile(m.manifestCachePath(), data); err != nil {
+		m.logv("write manifest cache: %v", err)
+	}
 }

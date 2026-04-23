@@ -183,7 +183,11 @@ case "$SHELL_NAME" in
     ;;
   fish)
     FISH_CONF="${HOME}/.config/fish/config.fish"
-    if [ -f "$FISH_CONF" ] && ! grep -qF "fgm" "$FISH_CONF" 2>/dev/null; then
+    mkdir -p "$(dirname "$FISH_CONF")"
+    if [ ! -f "$FISH_CONF" ]; then
+      : > "$FISH_CONF"
+    fi
+    if ! grep -qF "fgm" "$FISH_CONF" 2>/dev/null; then
       printf '\nfish_add_path %s/.local/bin %s/.fgm/bin %s/go/bin # fgm\n' "$HOME" "$HOME" "$HOME" >> "$FISH_CONF"
       info "Updated $FISH_CONF"
     fi

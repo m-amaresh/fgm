@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +17,10 @@ var uninstallCmd = &cobra.Command{
 	Args:    cobra.ExactArgs(1),
 	Long:    "Remove an installed Go version. Accepts exact (1.25.5), minor (1.25), or \"latest\" from locally installed versions.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		manager := getManager(cmd)
+		manager, err := getManager(cmd)
+		if err != nil {
+			return err
+		}
 		version, err := manager.ResolveInstalledVersion(args[0])
 		if err != nil {
 			return err
@@ -26,8 +28,7 @@ var uninstallCmd = &cobra.Command{
 		if err := manager.Uninstall(version); err != nil {
 			return err
 		}
-		green := color.New(color.Bold, color.FgGreen).SprintFunc()
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s Uninstalled go %s\n", green("✓"), version)
+		fmt.Fprintf(cmd.OutOrStdout(), "%s Uninstalled go %s\n", green("✓"), version)
 		return nil
 	},
 }

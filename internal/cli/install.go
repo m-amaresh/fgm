@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
@@ -19,18 +18,25 @@ var installCmd = &cobra.Command{
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		manager := getManager(cmd)
+		manager, err := getManager(cmd)
+		if err != nil {
+			return err
+		}
 		version, err := manager.ResolveVersion(ctx, args[0])
 		if err != nil {
 			return err
 		}
+		alreadyInstalled := manager.IsInstalled(version)
 		if err := manager.Install(ctx, version); err != nil {
 			return err
 		}
-		green := color.New(color.Bold, color.FgGreen).SprintFunc()
-		blue := color.New(color.Bold, color.FgBlue).SprintFunc()
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s Installed go %s\n", green("✓"), version)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s To activate: fgm use %s\n", blue("→"), version)
+		out := cmd.OutOrStdout()
+		if alreadyInstalled {
+			fmt.Fprintf(out, "%s go %s already installed\n", blue("•"), version)
+		} else {
+			fmt.Fprintf(out, "%s Installed go %s\n", green("✓"), version)
+		}
+		fmt.Fprintf(out, "%s To activate: fgm use %s\n", blue("→"), version)
 		return nil
 	},
 }

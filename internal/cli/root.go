@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -22,8 +23,12 @@ var verbose bool
 type managerKey struct{}
 
 // getManager retrieves the Manager from the cobra command context.
-func getManager(cmd *cobra.Command) *fgm.Manager {
-	return cmd.Context().Value(managerKey{}).(*fgm.Manager)
+func getManager(cmd *cobra.Command) (*fgm.Manager, error) {
+	m, ok := cmd.Context().Value(managerKey{}).(*fgm.Manager)
+	if !ok {
+		return nil, errors.New("internal: manager not initialized")
+	}
+	return m, nil
 }
 
 const banner = "" +
@@ -43,7 +48,6 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	cobra.EnableTraverseRunHooks = true
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose diagnostic output")
 }

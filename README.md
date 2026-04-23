@@ -52,6 +52,7 @@ go version            # verify it worked
 | `fgm list` | `ls` | List installed versions |
 | `fgm current` | | Show the active Go version |
 | `fgm version` | | Print fgm version, commit, and build info |
+| `fgm completion <shell>` | | Generate shell completion script (bash, zsh, fish, powershell) |
 | `fgm --help` | | Show help |
 | `fgm -v <command>` | | Run any command with verbose diagnostics |
 

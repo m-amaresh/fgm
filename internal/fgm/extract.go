@@ -159,8 +159,14 @@ func extractZipEntry(ctx context.Context, file *zip.File, dest string, totalWrit
 		return 0, os.MkdirAll(target, 0o755)
 	}
 
+	// Check the uncompressed size as uint64 before narrowing — narrowing first
+	// would let a malicious archive declaring a >2^63 size overflow to negative
+	// and bypass the cap.
+	if file.UncompressedSize64 > uint64(maxExtractSize) {
+		return 0, fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractSize)
+	}
 	size := int64(file.UncompressedSize64)
-	if size > maxExtractSize || totalWritten+size > maxExtractSize {
+	if totalWritten+size > maxExtractSize {
 		return 0, fmt.Errorf("archive exceeds maximum extraction size (%d bytes)", maxExtractSize)
 	}
 
