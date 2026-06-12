@@ -15,6 +15,7 @@ type archiveSpec struct {
 	url      string
 	ext      string
 	sha256   string
+	size     int64
 }
 
 func (m *Manager) archivePath(spec archiveSpec) string {
@@ -28,7 +29,6 @@ func (m *Manager) Install(ctx context.Context, version string) error {
 	m.logv("fgm root: %s", m.root)
 	m.logv("platform: %s/%s", runtime.GOOS, runtime.GOARCH)
 	if m.isInstalled(version) {
-		m.log("go %s is already installed", version)
 		return nil
 	}
 	if err := m.ensureLayout(); err != nil {
@@ -46,25 +46,29 @@ func (m *Manager) Install(ctx context.Context, version string) error {
 
 	archivePath := m.archivePath(spec)
 	m.logv("archive path: %s", archivePath)
-	if _, err := os.Stat(archivePath); errors.Is(err, os.ErrNotExist) {
-		m.log("Downloading %s...", spec.filename)
-		if err := downloadFile(ctx, spec.url, archivePath); err != nil {
-			_ = os.Remove(archivePath) // clean up partial download
+	cached := false
+	if _, err := os.Stat(archivePath); err == nil {
+		m.logv("using cached archive: %s", archivePath)
+		m.log("Verifying checksum...")
+		switch err := verifyChecksum(ctx, archivePath, spec.sha256); {
+		case err == nil:
+			cached = true
+		case ctx.Err() != nil:
+			return err
+		default:
+			// A corrupt cache entry (e.g. interrupted by a power loss) is
+			// recoverable: discard it and download a fresh copy.
+			m.log("warning: cached archive failed verification, downloading again (%v)", err)
+			_ = os.Remove(archivePath)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat archive cache: %w", err)
+	}
+	if !cached {
+		m.log("Downloading %s%s...", spec.filename, sizeHint(spec.size))
+		if err := downloadAndVerify(ctx, spec.url, archivePath, spec.sha256); err != nil {
 			return err
 		}
-	} else if err != nil {
-		return fmt.Errorf("stat archive cache: %w", err)
-	} else {
-		m.logv("using cached archive: %s", archivePath)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	m.log("Verifying checksum...")
-	if err := verifyChecksum(ctx, archivePath, spec.sha256); err != nil {
-		_ = os.Remove(archivePath)
-		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -122,7 +126,7 @@ func (m *Manager) Activate(version string) error {
 	if err := m.installShims(); err != nil {
 		return err
 	}
-	if err := atomicWriteFile(m.currentVersionFile(), []byte(version+"\n")); err != nil {
+	if err := atomicWriteFile(m.currentVersionFile(), []byte(version+"\n"), 0o644); err != nil {
 		return fmt.Errorf("write current version: %w", err)
 	}
 	return nil
@@ -183,11 +187,21 @@ func (m *Manager) resolveArchive(ctx context.Context, version string) (archiveSp
 					url:      "https://go.dev/dl/" + file.Filename,
 					ext:      expectedExt,
 					sha256:   file.SHA256,
+					size:     file.Size,
 				}, nil
 			}
 		}
 		return archiveSpec{}, fmt.Errorf("no %s/%s archive found for go %s", expectedOS, expectedArch, version)
 	}
 
-	return archiveSpec{}, fmt.Errorf("go %s was not found in the Go downloads manifest", version)
+	return archiveSpec{}, fmt.Errorf("go %s was not found in the Go downloads manifest (run \"fgm available --all\" to list versions)", version)
+}
+
+// sizeHint formats an archive size as " (NN MB)" for progress messages, or
+// "" when the manifest did not report a size.
+func sizeHint(bytes int64) string {
+	if bytes <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (%d MB)", (bytes+1<<19)/(1<<20))
 }

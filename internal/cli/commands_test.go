@@ -22,7 +22,7 @@ func TestCurrentCommand_NoActiveVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(output) != "no active Go version" {
+	if strings.TrimSpace(output) != "No active Go version. Run: fgm use latest" {
 		t.Fatalf("current output = %q", output)
 	}
 }
@@ -120,8 +120,8 @@ func TestCommandMissingManagerReturnsError(t *testing.T) {
 	}
 }
 
-// runAvailableCommand builds a fresh available command so the --all flag
-// defined on it is in scope when RunE looks it up via cmd.Flags().GetBool.
+// runAvailableCommand builds a fresh available command so ParseFlags sets the
+// --all variable bound to that command's RunE closure.
 func runAvailableCommand(t *testing.T, manager *fgm.Manager, all bool) (string, error) {
 	t.Helper()
 	cmd := newAvailableCmd()

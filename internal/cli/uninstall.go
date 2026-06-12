@@ -11,8 +11,8 @@ func newUninstallCmd() *cobra.Command {
 		Use:     "uninstall <version>",
 		Aliases: []string{"un"},
 		Short:   "Remove an installed Go version",
-		Args:    cobra.ExactArgs(1),
 		Long:    "Remove an installed Go version. Accepts exact (1.25.5), minor (1.25), or \"latest\" from locally installed versions.",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manager, err := getManager(cmd)
 			if err != nil {

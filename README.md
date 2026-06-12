@@ -30,7 +30,9 @@ iwr -useb https://raw.githubusercontent.com/m-amaresh/fgm/main/scripts/install.p
 
 The installer downloads the correct binary for your OS and architecture, places it on your `PATH`, and sets up `~/.fgm/bin` for the Go shims.
 
-> If you previously installed Go via the official installer (`/usr/local/go`), fgm will still take priority since `~/.fgm/bin` is prepended to `PATH`. You can safely remove the old installation with `sudo rm -rf /usr/local/go`.
+> **Linux / macOS:** if you previously installed Go via the official installer (`/usr/local/go`), fgm will still take priority since `~/.fgm/bin` is prepended to `PATH`. You can safely remove the old installation with `sudo rm -rf /usr/local/go`.
+
+> **Windows:** a system-wide Go installation (on the machine `PATH`) takes priority over fgm's user `PATH` entries. Uninstall it, or remove it from the system `PATH`, to let fgm manage Go. The installer warns when it detects this.
 
 > Restart your terminal after installation, or `source` your shell profile as shown in the installer output.
 
@@ -52,6 +54,7 @@ go version            # verify it worked
 | `fgm list` | `ls` | List installed versions |
 | `fgm available` | `list-remote` | List installable Go versions |
 | `fgm current` | | Show the active Go version |
+| `fgm prune` | | Remove cached downloads and the manifest cache |
 | `fgm env` | | Print fgm environment diagnostics |
 | `fgm doctor` | | Check fgm installation health |
 | `fgm version` | | Print fgm version, commit, and build info |
@@ -103,6 +106,7 @@ fgm uninstall 1.22.12     # remove a version you no longer need
     1.23.4/
     1.24.1/
   downloads/           ← cached archive tarballs/zips
+  tmp/                 ← scratch space during installs (cleaned automatically)
   manifest-cache.json  ← cached release manifest
 ```
 
@@ -182,7 +186,7 @@ Open your shell config file and delete the line containing `# fgm-managed-path`:
 
 | Shell | File |
 |-------|------|
-| bash | `~/.bashrc` and `~/.bash_profile` |
+| bash | `~/.bashrc`, plus `~/.bash_profile` or `~/.profile` |
 | zsh | `~/.zshrc` |
 | fish | `~/.config/fish/config.fish` |
 | other | `~/.profile` |

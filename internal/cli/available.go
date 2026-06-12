@@ -7,6 +7,7 @@ import (
 )
 
 func newAvailableCmd() *cobra.Command {
+	var all bool
 	cmd := &cobra.Command{
 		Use:     "available",
 		Aliases: []string{"list-remote"},
@@ -16,11 +17,6 @@ func newAvailableCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			all, err := cmd.Flags().GetBool("all")
-			if err != nil {
-				return err
-			}
-
 			versions, err := manager.Available(cmd.Context(), all)
 			if err != nil {
 				return err
@@ -37,6 +33,6 @@ func newAvailableCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Bool("all", false, "show all stable patch releases")
+	cmd.Flags().BoolVar(&all, "all", false, "show all stable patch releases")
 	return cmd
 }

@@ -457,11 +457,18 @@ func TestIntegration_VerboseOutput(t *testing.T) {
 
 // ── Checksum verification is real ───────────────────────────────────
 
-func TestIntegration_ChecksumActuallyVerified(t *testing.T) {
+func TestIntegration_CorruptCachedArchiveSelfHeals(t *testing.T) {
 	skipIfShort(t)
 
 	ctx := context.Background()
-	m := newRealManager(t)
+	root := t.TempDir()
+	var logs []string
+	m, err := NewManager(root, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Install normally to get the archive.
 	if err := m.Install(ctx, testVersion); err != nil {
@@ -490,12 +497,16 @@ func TestIntegration_ChecksumActuallyVerified(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Install should fail due to checksum mismatch.
-	err = m.Install(ctx, testVersion)
-	if err == nil {
-		t.Fatal("expected checksum error with corrupted archive")
+	// Install must detect the corruption, warn, re-download, and succeed.
+	if err := m.Install(ctx, testVersion); err != nil {
+		t.Fatalf("install did not recover from corrupt cached archive: %v", err)
 	}
-	if !strings.Contains(err.Error(), "checksum") {
-		t.Fatalf("expected checksum error, got: %v", err)
+	allLogs := strings.Join(logs, "\n")
+	if !strings.Contains(allLogs, "failed verification") {
+		t.Errorf("expected a verification warning in logs, got:\n%s", allLogs)
+	}
+	goBin := filepath.Join(m.versionDir(testVersion), "bin", "go")
+	if _, err := os.Stat(goBin); err != nil {
+		t.Fatalf("go binary missing after recovery: %v", err)
 	}
 }

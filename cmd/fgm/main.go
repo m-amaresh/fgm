@@ -16,10 +16,10 @@ func main() {
 	if err := cli.Execute(ctx); err != nil {
 		stop()
 		if errors.Is(err, context.Canceled) {
-			_, _ = fmt.Fprintln(os.Stderr, "\nOperation canceled.")
+			fmt.Fprintln(os.Stderr, "\nOperation canceled.")
 			os.Exit(130)
 		}
-		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	stop()
