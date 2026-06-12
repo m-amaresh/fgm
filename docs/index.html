@@ -165,10 +165,10 @@
         <div class="px-5 py-5 font-mono text-sm leading-relaxed overflow-x-auto">
           <p><span class="text-muted">$</span> fgm install latest</p>
           <p class="text-muted">Resolving go &lt;resolved-version&gt;...</p>
-          <p class="text-muted">Downloading go&lt;resolved-version&gt;.linux-amd64.tar.gz...</p>
-          <p class="text-muted">Verifying checksum...</p>
+          <p class="text-muted">Downloading go&lt;resolved-version&gt;.linux-amd64.tar.gz (70 MB)...</p>
           <p class="text-muted">Extracting...</p>
           <p><span class="text-accent">✓</span> Installed go &lt;resolved-version&gt;</p>
+          <p><span class="text-blue-400">→</span> To activate: fgm use &lt;resolved-version&gt;</p>
 
           <p class="mt-4"><span class="text-muted">$</span> fgm use latest</p>
           <p><span class="text-accent">✓</span> Using go &lt;resolved-version&gt;</p>
@@ -293,8 +293,8 @@
           <span class="text-muted">
             fgm fetches the official Go release manifest from
             <code class="font-mono text-text">go.dev/dl</code>
-            (cached locally for 15 minutes), pulls the right archive for your platform, and verifies its SHA-256 before
-            extraction.
+            (cached locally for 15 minutes), pulls the right archive for your platform, and verifies its SHA-256 as it
+            downloads — nothing unverified ever lands in the cache.
           </span>
         </p>
         <p>

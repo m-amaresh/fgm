@@ -1,7 +1,7 @@
 #!/bin/sh
 # FGM – Fast Go Manager installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/m-amaresh/fgm/main/scripts/install.sh | bash
-set -e
+set -eu
 
 REPO="m-amaresh/fgm"
 INSTALL_DIR="${HOME}/.local/bin"
@@ -58,15 +58,18 @@ latest_version() {
 }
 
 download() {
-  url="$1"; dest="$2"
+  _dl_url="$1"; _dl_dest="$2"
   if [ "$HTTP_CLIENT" = "curl" ]; then
-    curl -fSL --progress-bar -o "$dest" "$url" || err "Download failed: $url"
+    curl -fSL --progress-bar -o "$_dl_dest" "$_dl_url" || err "Download failed: $_dl_url"
+  elif wget --help 2>&1 | grep -q -- --show-progress; then
+    wget --show-progress -qO "$_dl_dest" "$_dl_url" || err "Download failed: $_dl_url"
   else
-    wget --show-progress -qO "$dest" "$url" || err "Download failed: $url"
+    # busybox wget (Alpine) has no --show-progress.
+    wget -qO "$_dl_dest" "$_dl_url" || err "Download failed: $_dl_url"
   fi
   # Verify the file is non-empty.
-  if [ ! -s "$dest" ]; then
-    err "Downloaded file is empty: $dest"
+  if [ ! -s "$_dl_dest" ]; then
+    err "Downloaded file is empty: $_dl_dest"
   fi
 }
 
@@ -176,7 +179,14 @@ SHELL_NAME="$(basename "${SHELL:-/bin/sh}")"
 case "$SHELL_NAME" in
   bash)
     add_to_profile "$HOME/.bashrc"
-    add_to_profile "$HOME/.bash_profile"
+    # Login shells: append to .bash_profile only if it already exists.
+    # Creating it would make bash skip an existing .profile, silently
+    # dropping the user's environment.
+    if [ -f "$HOME/.bash_profile" ]; then
+      add_to_profile "$HOME/.bash_profile"
+    else
+      add_to_profile "$HOME/.profile"
+    fi
     ;;
   zsh)
     add_to_profile "$HOME/.zshrc"

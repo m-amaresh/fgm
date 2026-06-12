@@ -2,7 +2,6 @@ package fgm
 
 import (
 	"cmp"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -65,7 +64,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 // atomicWriteFile writes data to a temp file in the same directory and renames
 // it to path, ensuring the file is never partially written.
-func atomicWriteFile(path string, data []byte) error {
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
 		return err
@@ -86,7 +85,7 @@ func atomicWriteFile(path string, data []byte) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
+	if err := os.Chmod(tmpName, mode); err != nil {
 		_ = os.Remove(tmpName)
 		return err
 	}
@@ -114,21 +113,4 @@ func compareVersions(a, b string) int {
 
 func shellEscape(s string) string {
 	return strings.ReplaceAll(s, "'", `'\''`)
-}
-
-func removePath(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return os.Remove(path)
-	}
-	if info.IsDir() {
-		return os.RemoveAll(path)
-	}
-	return os.Remove(path)
 }

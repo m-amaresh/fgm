@@ -15,6 +15,19 @@ import (
 	"time"
 )
 
+// httpClient is shared by manifest fetches and archive downloads so the
+// connection to go.dev is reused within a single run. There is deliberately
+// no overall timeout: archive downloads on slow links can take arbitrarily
+// long, and cancellation comes from the request context instead.
+var httpClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	},
+}
+
 type ctxReader struct {
 	ctx context.Context
 	r   io.Reader
@@ -41,12 +54,15 @@ func (r *ctxReader) Read(p []byte) (int, error) {
 }
 
 func fetchManifest(ctx context.Context) ([]releaseManifest, error) {
-	client := &http.Client{Timeout: 2 * time.Minute}
+	// The manifest is small; bound the whole fetch.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create manifest request: %w", err)
 	}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch Go downloads manifest: %w", canceledErr(ctx, err))
 	}
@@ -87,13 +103,25 @@ func platformReleaseParts() (osName, arch, ext string, err error) {
 	return "", "", "", fmt.Errorf("unsupported platform: %s", key)
 }
 
-func downloadFile(ctx context.Context, url, dest string) error {
-	client := &http.Client{Timeout: 10 * time.Minute}
+// partialPrefix names in-flight download temp files in the downloads dir.
+// Leftovers from killed processes are swept by cleanStalePartials.
+const partialPrefix = ".partial-"
+
+// downloadAndVerify downloads url into dest, hashing the body as it streams
+// and verifying it against expectedSHA256 before the file is moved into
+// place. dest never exists in a partial or corrupt state: the body is
+// written to a temp file in the same directory and only renamed once the
+// download completed and the checksum matched.
+func downloadAndVerify(ctx context.Context, url, dest, expectedSHA256 string) error {
+	if err := validateSHA256(expectedSHA256); err != nil {
+		return fmt.Errorf("invalid checksum for %s: %w", filepath.Base(dest), err)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("create download request: %w", err)
 	}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", url, canceledErr(ctx, err))
 	}
@@ -103,28 +131,45 @@ func downloadFile(ctx context.Context, url, dest string) error {
 		return fmt.Errorf("download %s: unexpected status %s", url, resp.Status)
 	}
 
-	out, err := os.Create(dest)
+	tmp, err := os.CreateTemp(filepath.Dir(dest), partialPrefix+"*")
 	if err != nil {
-		return fmt.Errorf("create archive: %w", err)
+		return fmt.Errorf("create download temp file: %w", err)
 	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
 
 	// Limit archive downloads to 512 MiB. The largest official Go archive
 	// is ~200 MB; this is a safety cap against runaway responses.
 	const maxDownloadSize = 512 << 20
-	n, copyErr := io.Copy(out, io.LimitReader(&ctxReader{ctx: ctx, r: resp.Body}, maxDownloadSize+1))
-	if closeErr := out.Close(); closeErr != nil && copyErr == nil {
-		return fmt.Errorf("close archive: %w", closeErr)
+	sum := sha256.New()
+	n, copyErr := io.Copy(io.MultiWriter(tmp, sum), io.LimitReader(&ctxReader{ctx: ctx, r: resp.Body}, maxDownloadSize+1))
+	if closeErr := tmp.Close(); closeErr != nil && copyErr == nil {
+		copyErr = closeErr
 	}
 	if copyErr != nil {
+		cleanup()
 		return fmt.Errorf("write archive: %w", canceledErr(ctx, copyErr))
 	}
 	if n > maxDownloadSize {
-		_ = os.Remove(dest)
+		cleanup()
 		return fmt.Errorf("download %s: response exceeds maximum size (%d bytes)", url, maxDownloadSize)
+	}
+
+	actual := hex.EncodeToString(sum.Sum(nil))
+	if !strings.EqualFold(actual, expectedSHA256) {
+		cleanup()
+		return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", filepath.Base(dest), expectedSHA256, actual)
+	}
+
+	if err := os.Rename(tmpName, dest); err != nil {
+		cleanup()
+		return fmt.Errorf("move verified archive into place: %w", err)
 	}
 	return nil
 }
 
+// verifyChecksum re-hashes an already-downloaded archive (the cached-archive
+// path; fresh downloads are verified inline by downloadAndVerify).
 func verifyChecksum(ctx context.Context, path, expected string) error {
 	if expected == "" {
 		return fmt.Errorf("missing checksum for %s", filepath.Base(path))

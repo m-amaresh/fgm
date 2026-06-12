@@ -1,6 +1,7 @@
 package fgm
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,7 +60,7 @@ func (m *Manager) Doctor() []DoctorCheck {
 
 func (m *Manager) checkDir(name, path string) DoctorCheck {
 	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return DoctorCheck{
 			Status:  DoctorWarn,
 			Name:    name,
@@ -101,7 +102,7 @@ func (m *Manager) checkBinOnPath() DoctorCheck {
 func (m *Manager) checkShim(name string) DoctorCheck {
 	path := filepath.Join(m.binDir(), shimFilename(name))
 	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return DoctorCheck{
 			Status:  DoctorWarn,
 			Name:    name + " shim",

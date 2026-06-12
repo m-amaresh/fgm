@@ -1,6 +1,8 @@
 # FGM – Fast Go Manager installer for Windows
 # Usage: iwr -useb https://raw.githubusercontent.com/m-amaresh/fgm/main/scripts/install.ps1 | iex
 $ErrorActionPreference = "Stop"
+# Progress bar rendering slows Invoke-WebRequest dramatically on PS 5.1.
+$ProgressPreference = "SilentlyContinue"
 
 # Require PowerShell 5.1+ (ships with Windows 10+).
 if ($PSVersionTable.PSVersion.Major -lt 5 -or
@@ -46,13 +48,22 @@ function Get-Arch {
 }
 
 # ── main ─────────────────────────────────────────────────────────────
+# Warn if another Go installation could shadow fgm: on Windows the machine
+# PATH is resolved before the user PATH, where fgm adds its entries.
+$ExistingGo = Get-Command go -ErrorAction SilentlyContinue
+if ($ExistingGo -and $ExistingGo.Source -notlike "$FgmDir*") {
+    Write-Host "warning: An existing Go installation was found at $($ExistingGo.Source)." -ForegroundColor Yellow
+    Write-Host "         If it is on the system (machine) PATH, it takes priority over fgm." -ForegroundColor Yellow
+    Write-Host "         Uninstall it or remove it from the system PATH to let fgm manage Go." -ForegroundColor Yellow
+    Write-Host ""
+}
+
 $Arch = Get-Arch
 $Version = Get-LatestVersion
-$VersionNum = $Version
 
 Write-Host "=> Installing FGM $Version (windows/$Arch)..." -ForegroundColor Cyan
 
-$Archive = "fgm_${VersionNum}_windows_${Arch}.zip"
+$Archive = "fgm_${Version}_windows_${Arch}.zip"
 $Url = "https://github.com/$Repo/releases/download/$Version/$Archive"
 
 $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("fgm-install-" + [guid]::NewGuid().ToString("N").Substring(0, 8))

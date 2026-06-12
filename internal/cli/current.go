@@ -21,7 +21,7 @@ func newCurrentCmd() *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			if version == "" {
-				fmt.Fprintln(w, "no active Go version")
+				fmt.Fprintln(w, "No active Go version. Run: fgm use latest")
 				return nil
 			}
 			fmt.Fprintln(w, version)

@@ -139,21 +139,74 @@ func TestValidateSHA256(t *testing.T) {
 
 // ── cancellation ───────────────────────────────────────────────────
 
-func TestDownloadFile_CanceledBeforeRequest(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	dest := filepath.Join(t.TempDir(), "archive.tar.gz")
-	err := downloadFile(ctx, "http://127.0.0.1:1/archive.tar.gz", dest)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("downloadFile error = %v, want context.Canceled", err)
+// noLeftovers fails the test if dir contains any entries (the download dir
+// must hold neither the destination nor stray .partial temp files on failure).
+func noLeftovers(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, statErr := os.Stat(dest); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("download destination exists after canceled request: %v", statErr)
+	for _, e := range entries {
+		t.Errorf("unexpected leftover file after failed download: %s", e.Name())
 	}
 }
 
-func TestDownloadFile_CanceledDuringBodyCopy(t *testing.T) {
+func TestDownloadAndVerify_CanceledBeforeRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "archive.tar.gz")
+	err := downloadAndVerify(ctx, "http://127.0.0.1:1/archive.tar.gz", dest, strings.Repeat("a", 64))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("downloadAndVerify error = %v, want context.Canceled", err)
+	}
+	noLeftovers(t, dir)
+}
+
+func TestDownloadAndVerify_ChecksumMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("not the bytes the manifest promised"))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "archive.tar.gz")
+	err := downloadAndVerify(context.Background(), server.URL, dest, strings.Repeat("a", 64))
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("downloadAndVerify error = %v, want checksum mismatch", err)
+	}
+	noLeftovers(t, dir)
+}
+
+func TestDownloadAndVerify_Success(t *testing.T) {
+	body := []byte("archive bytes")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	sum := sha256.Sum256(body)
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "archive.tar.gz")
+	if err := downloadAndVerify(context.Background(), server.URL, dest, hex.EncodeToString(sum[:])); err != nil {
+		t.Fatalf("downloadAndVerify failed: %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("downloaded content = %q, want %q", got, body)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("expected only the archive in download dir, found %d entries", len(entries))
+	}
+}
+
+func TestDownloadAndVerify_CanceledDuringBodyCopy(t *testing.T) {
 	bodyStarted := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -170,10 +223,11 @@ func TestDownloadFile_CanceledDuringBodyCopy(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	dest := filepath.Join(t.TempDir(), "archive.tar.gz")
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "archive.tar.gz")
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- downloadFile(ctx, server.URL, dest)
+		errCh <- downloadAndVerify(ctx, server.URL, dest, strings.Repeat("a", 64))
 	}()
 
 	select {
@@ -186,11 +240,12 @@ func TestDownloadFile_CanceledDuringBodyCopy(t *testing.T) {
 	select {
 	case err := <-errCh:
 		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("downloadFile error = %v, want context.Canceled", err)
+			t.Fatalf("downloadAndVerify error = %v, want context.Canceled", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("downloadFile did not return after context cancellation")
+		t.Fatal("downloadAndVerify did not return after context cancellation")
 	}
+	noLeftovers(t, dir)
 }
 
 func TestVerifyChecksum_CanceledContext(t *testing.T) {
@@ -555,7 +610,7 @@ func TestAtomicWriteFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "version")
 
-	if err := atomicWriteFile(path, []byte("1.25.5\n")); err != nil {
+	if err := atomicWriteFile(path, []byte("1.25.5\n"), 0o644); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -568,7 +623,7 @@ func TestAtomicWriteFile(t *testing.T) {
 	}
 
 	// Overwrite atomically.
-	if err := atomicWriteFile(path, []byte("1.26.0\n")); err != nil {
+	if err := atomicWriteFile(path, []byte("1.26.0\n"), 0o644); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	got, _ = os.ReadFile(path)
@@ -1179,7 +1234,7 @@ func TestList_StaleCurrentVersionWarnsAndContinues(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(m.currentVersionFile()), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := atomicWriteFile(m.currentVersionFile(), []byte("1.99.0\n")); err != nil {
+	if err := atomicWriteFile(m.currentVersionFile(), []byte("1.99.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1389,7 +1444,7 @@ func TestEnv_StaleCurrentVersionReportsError(t *testing.T) {
 	if err := os.MkdirAll(m.versionDir("1.25.5"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := atomicWriteFile(m.currentVersionFile(), []byte("1.99.0\n")); err != nil {
+	if err := atomicWriteFile(m.currentVersionFile(), []byte("1.99.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1437,7 +1492,7 @@ func TestDoctor_StaleCurrentVersionFails(t *testing.T) {
 	if err := os.MkdirAll(m.versionDir("1.25.5"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := atomicWriteFile(m.currentVersionFile(), []byte("1.99.0\n")); err != nil {
+	if err := atomicWriteFile(m.currentVersionFile(), []byte("1.99.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

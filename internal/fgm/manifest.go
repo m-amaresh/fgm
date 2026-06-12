@@ -24,6 +24,7 @@ type releaseFile struct {
 	Arch     string `json:"arch"`
 	Version  string `json:"version"`
 	SHA256   string `json:"sha256"`
+	Size     int64  `json:"size"`
 	Kind     string `json:"kind"`
 }
 
@@ -95,7 +96,7 @@ func (m *Manager) storeManifestCache(releases []releaseManifest) {
 		m.logv("create root for manifest cache: %v", err)
 		return
 	}
-	if err := atomicWriteFile(m.manifestCachePath(), data); err != nil {
+	if err := atomicWriteFile(m.manifestCachePath(), data, 0o644); err != nil {
 		m.logv("write manifest cache: %v", err)
 	}
 }

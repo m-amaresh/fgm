@@ -7,6 +7,7 @@ import (
 )
 
 func newInstallCmd() *cobra.Command {
+	var alsoUse bool
 	cmd := &cobra.Command{
 		Use:     "install <version>",
 		Aliases: []string{"in"},
@@ -16,10 +17,6 @@ func newInstallCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			manager, err := getManager(cmd)
-			if err != nil {
-				return err
-			}
-			alsoUse, err := cmd.Flags().GetBool("use")
 			if err != nil {
 				return err
 			}
@@ -48,6 +45,6 @@ func newInstallCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Bool("use", false, "activate the version after installing")
+	cmd.Flags().BoolVar(&alsoUse, "use", false, "activate the version after installing")
 	return cmd
 }

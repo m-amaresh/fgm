@@ -30,8 +30,9 @@ func (m *Manager) ensureLayout() error {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
-	// Clean up stale tmp entries left by previous crashed runs.
+	// Clean up leftovers from previous crashed runs.
 	m.cleanStaleTmp()
+	m.cleanStalePartials()
 	return nil
 }
 
@@ -44,6 +45,20 @@ func (m *Manager) cleanStaleTmp() {
 	}
 	for _, e := range entries {
 		_ = os.RemoveAll(filepath.Join(m.tmpDir(), e.Name()))
+	}
+}
+
+// cleanStalePartials removes in-flight download temp files that a killed
+// process left behind in the downloads directory.
+func (m *Manager) cleanStalePartials() {
+	entries, err := os.ReadDir(m.downloadsDir())
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), partialPrefix) {
+			_ = os.Remove(filepath.Join(m.downloadsDir(), e.Name()))
+		}
 	}
 }
 
@@ -61,7 +76,7 @@ func (m *Manager) markerPointsTo(version string) bool {
 }
 
 func (m *Manager) deactivateCurrent() error {
-	if err := removePath(m.currentVersionFile()); err != nil {
+	if err := os.Remove(m.currentVersionFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove current version file: %w", err)
 	}
 	return nil

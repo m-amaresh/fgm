@@ -86,6 +86,5 @@ func Execute(ctx context.Context) error {
 
 // stderrLog writes manager messages to stderr.
 func stderrLog(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	_, _ = fmt.Fprintln(os.Stderr, msg)
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
 }
