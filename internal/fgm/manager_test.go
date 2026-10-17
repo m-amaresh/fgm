@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -1433,12 +1434,12 @@ func TestUse(t *testing.T) {
 
 	// Shims should exist.
 	for _, name := range []string{"go", "gofmt"} {
-		shimPath := filepath.Join(m.binDir(), name)
+		shimPath := m.shimPath(name)
 		info, err := os.Stat(shimPath)
 		if err != nil {
 			t.Fatalf("shim %s not found: %v", name, err)
 		}
-		if info.Mode()&0o111 == 0 {
+		if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 			t.Fatalf("shim %s is not executable", name)
 		}
 	}
@@ -1625,7 +1626,7 @@ func TestShimContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	shimPath := filepath.Join(m.binDir(), "go")
+	shimPath := m.shimPath("go")
 	content, err := os.ReadFile(shimPath)
 	if err != nil {
 		t.Fatal(err)

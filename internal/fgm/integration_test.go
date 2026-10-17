@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -201,12 +202,12 @@ func TestIntegration_InstallAndUse(t *testing.T) {
 
 	// Shims should exist and be executable.
 	for _, name := range []string{"go", "gofmt"} {
-		shimPath := filepath.Join(m.binDir(), name)
+		shimPath := m.shimPath(name)
 		si, err := os.Stat(shimPath)
 		if err != nil {
 			t.Fatalf("shim %s not found: %v", name, err)
 		}
-		if si.Mode()&0o111 == 0 {
+		if runtime.GOOS != "windows" && si.Mode()&0o111 == 0 {
 			t.Fatalf("shim %s is not executable", name)
 		}
 		// Shim should contain the root path.

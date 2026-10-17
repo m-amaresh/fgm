@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -421,7 +422,9 @@ func TestCopyDir_PreservesTreeAndExecutableBits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode()&0o111 == 0 {
+	// Windows does not expose Unix executable permission bits; the copied
+	// file remains executable there by virtue of its .exe image.
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		t.Error("expected the executable bit to survive the copy")
 	}
 }
