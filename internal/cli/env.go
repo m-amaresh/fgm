@@ -28,10 +28,16 @@ func newEnvCmd() *cobra.Command {
 			fmt.Fprintf(w, "versions dir:  %s\n", info.VersionsDir)
 			fmt.Fprintf(w, "downloads dir: %s\n", info.DownloadsDir)
 			fmt.Fprintf(w, "current:       %s\n", current)
+			if info.LocalVersion != "" {
+				fmt.Fprintf(w, "local:         %s (%s)\n", info.LocalVersion, info.LocalFile)
+			}
 			fmt.Fprintf(w, "platform:      %s\n", info.Platform)
-			if info.CurrentError != "" {
-				fmt.Fprintln(w)
-				fmt.Fprintf(w, "warning: %s\n", info.CurrentError)
+			fmt.Fprintf(w, "GOTOOLCHAIN:   %s\n", info.GoToolchain)
+			for _, warning := range []string{info.LocalError, info.CurrentError} {
+				if warning != "" {
+					fmt.Fprintln(w)
+					fmt.Fprintf(w, "warning: %s\n", warning)
+				}
 			}
 			return nil
 		},

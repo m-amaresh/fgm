@@ -116,6 +116,25 @@ try {
     $Dest = Join-Path $InstallDir "fgm.exe"
     Move-Item -Path $Src -Destination $Dest -Force
 
+    # On an upgrade the shims are still the ones the previous version wrote,
+    # and they resolve versions on their own — regenerate them so shim fixes
+    # land.
+    if (Test-Path "$FgmDir\bin\go.cmd") {
+        $ReshimFailed = $false
+        try {
+            # A native command's exit code does not raise, whatever
+            # $ErrorActionPreference says, so check it directly. The catch is
+            # for the launch itself failing.
+            & $Dest reshim | Out-Null
+            $ReshimFailed = ($LASTEXITCODE -ne 0)
+        } catch {
+            $ReshimFailed = $true
+        }
+        if ($ReshimFailed) {
+            Write-Host "warning: could not regenerate shims; run: fgm reshim" -ForegroundColor Yellow
+        }
+    }
+
     # ── PATH setup ───────────────────────────────────────────────────
     $UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
     $Existing = $UserPath -split ';'

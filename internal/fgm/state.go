@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // ── filesystem layout ──────────────────────────────────────────────
@@ -36,15 +37,39 @@ func (m *Manager) ensureLayout() error {
 	return nil
 }
 
-// cleanStaleTmp removes all entries inside the tmp directory. These are
-// only created during install and should not survive across invocations.
+// staleAfter is how long scratch space or a partial download has to sit
+// untouched before another fgm run treats it as abandoned.
+//
+// Nothing here is owned by a single process, so an unconditional sweep would
+// let a second command delete the scratch directory an install is extracting
+// into. Two fgm commands at once are rare on a single-user CLI, but the cost
+// of guessing wrong is a failed install, while the cost of waiting an hour to
+// reclaim a few megabytes is nothing.
+const staleAfter = time.Hour
+
+// isStale reports whether path was last modified longer ago than staleAfter.
+// An unreadable entry is reported as fresh: leaving it costs disk, deleting
+// something still in use costs an install.
+func isStale(entry os.DirEntry) bool {
+	info, err := entry.Info()
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) > staleAfter
+}
+
+// cleanStaleTmp removes abandoned scratch directories. Every install removes
+// its own on the way out, so anything left here belongs to a run that was
+// killed.
 func (m *Manager) cleanStaleTmp() {
 	entries, err := os.ReadDir(m.tmpDir())
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
-		_ = os.RemoveAll(filepath.Join(m.tmpDir(), e.Name()))
+		if isStale(e) {
+			_ = os.RemoveAll(filepath.Join(m.tmpDir(), e.Name()))
+		}
 	}
 }
 
@@ -56,7 +81,7 @@ func (m *Manager) cleanStalePartials() {
 		return
 	}
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), partialPrefix) {
+		if strings.HasPrefix(e.Name(), partialPrefix) && isStale(e) {
 			_ = os.Remove(filepath.Join(m.downloadsDir(), e.Name()))
 		}
 	}
@@ -65,14 +90,19 @@ func (m *Manager) cleanStalePartials() {
 // ── current version marker ────────────────────────────────────────
 
 // markerPointsTo reports whether the current-version file names the given
-// version, regardless of whether that version is still installed.
+// version, regardless of whether that version is still installed — the state
+// uninstall is most likely to be cleaning up. It reads the marker the same
+// way Current does, so a marker Current calls active is one uninstall clears.
 func (m *Manager) markerPointsTo(version string) bool {
-	if data, err := os.ReadFile(m.currentVersionFile()); err == nil {
-		if strings.TrimSpace(string(data)) == version {
-			return true
-		}
+	data, err := os.ReadFile(m.currentVersionFile())
+	if err != nil {
+		return false
 	}
-	return false
+	marker, err := parseVersionFile(data, m.currentVersionFile())
+	if err != nil {
+		return false
+	}
+	return marker == version
 }
 
 func (m *Manager) deactivateCurrent() error {
@@ -88,6 +118,12 @@ func (m *Manager) deactivateCurrent() error {
 func (m *Manager) IsInstalled(version string) bool { return m.isInstalled(version) }
 
 func (m *Manager) isInstalled(version string) bool {
+	// versionDir joins the version into a path, so validate before touching
+	// the filesystem: a value like "../../elsewhere" would otherwise report a
+	// directory outside the versions dir as an installed toolchain.
+	if validateVersion(version) != nil {
+		return false
+	}
 	info, err := os.Stat(m.versionDir(version))
 	if err != nil {
 		return false
@@ -98,7 +134,10 @@ func (m *Manager) isInstalled(version string) bool {
 func (m *Manager) Current() (string, error) {
 	data, err := os.ReadFile(m.currentVersionFile())
 	if err == nil {
-		version := strings.TrimSpace(string(data))
+		version, err := parseVersionFile(data, m.currentVersionFile())
+		if err != nil {
+			return "", err
+		}
 		if version == "" {
 			return "", nil
 		}
@@ -136,18 +175,40 @@ func (m *Manager) List() ([]string, string, error) {
 	}
 	slices.SortFunc(versions, compareVersions)
 
-	current, err := m.Current()
+	// Mark the version the shims would actually use from here, so a
+	// .go-version pin is reflected in the listing.
+	effective, err := m.EffectiveCwd()
 	if err != nil {
-		if m.log != nil {
-			m.log("warning: %v", err)
-		}
-		current = ""
+		m.log("warning: %v", err)
+		return versions, "", nil
 	}
-	return versions, current, nil
+	return versions, effective.Version, nil
 }
 
-// Prune removes cached downloads and the manifest cache. It returns the
-// number of files removed and total bytes freed.
+// notInstalledError reports a missing version, naming any installed versions
+// from the same minor series to help with a mistyped patch number.
+func (m *Manager) notInstalledError(version string) error {
+	entries, err := os.ReadDir(m.versionsDir())
+	if err != nil {
+		return fmt.Errorf("go %s is not installed", version)
+	}
+	prefix := minorVersionKey(version) + "."
+	var matches []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() && strings.HasPrefix(name, prefix) && validateVersion(name) == nil {
+			matches = append(matches, name)
+		}
+	}
+	if len(matches) == 0 {
+		return fmt.Errorf("go %s is not installed", version)
+	}
+	slices.SortFunc(matches, compareVersions)
+	return fmt.Errorf("go %s is not installed (installed: %s)", version, strings.Join(matches, ", "))
+}
+
+// Prune removes cached downloads, scratch space and the manifest cache. It
+// returns the number of entries removed and total bytes freed.
 func (m *Manager) Prune() (int, int64, error) {
 	var removed int
 	var freedBytes int64
@@ -158,11 +219,32 @@ func (m *Manager) Prune() (int, int64, error) {
 		return 0, 0, fmt.Errorf("read downloads dir: %w", err)
 	}
 	for _, e := range entries {
+		// Leave in-flight downloads alone: they belong to an install that is
+		// still running. Ones old enough to be abandoned are fair game.
+		if strings.HasPrefix(e.Name(), partialPrefix) && !isStale(e) {
+			continue
+		}
 		path := filepath.Join(m.downloadsDir(), e.Name())
 		if info, err := e.Info(); err == nil {
 			freedBytes += info.Size()
 		}
 		if err := os.Remove(path); err != nil {
+			return removed, freedBytes, fmt.Errorf("remove %s: %w", e.Name(), err)
+		}
+		removed++
+	}
+
+	// Remove scratch space left by interrupted installs, again leaving alone
+	// anything recent enough to belong to an install running right now.
+	tmpEntries, err := os.ReadDir(m.tmpDir())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return removed, freedBytes, fmt.Errorf("read tmp dir: %w", err)
+	}
+	for _, e := range tmpEntries {
+		if !isStale(e) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(m.tmpDir(), e.Name())); err != nil {
 			return removed, freedBytes, fmt.Errorf("remove %s: %w", e.Name(), err)
 		}
 		removed++

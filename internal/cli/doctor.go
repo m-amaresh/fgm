@@ -27,10 +27,13 @@ func newDoctorCmd() *cobra.Command {
 	}
 }
 
+// doctorStatus renders the status label padded to a fixed width. Padding has
+// to happen inside the colour wrapper, since the escape codes would otherwise
+// throw off any width applied by the caller's format string.
 func doctorStatus(status string) string {
 	switch status {
 	case fgm.DoctorOK:
-		return green("OK")
+		return green("OK  ")
 	case fgm.DoctorWarn:
 		return yellow("WARN")
 	case fgm.DoctorFail:

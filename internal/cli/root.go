@@ -73,6 +73,7 @@ func NewRootCmd() *cobra.Command {
 		newInstallCmd(),
 		newListCmd(),
 		newPruneCmd(),
+		newReshimCmd(),
 		newUninstallCmd(),
 		newUseCmd(),
 		newVersionCmd(),

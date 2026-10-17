@@ -22,6 +22,31 @@ import (
 	"time"
 )
 
+// TestMain runs the package from a scratch directory. List, Doctor and Env
+// resolve a .go-version by walking up from the working directory, so running
+// inside a checkout would let a stray pin above the repo change results.
+func TestMain(m *testing.M) {
+	// The shim tests copy this binary into a version directory to stand in
+	// for the go binary, since a script cannot be exec'd as go.exe.
+	if os.Getenv(fakeGoEnv) != "" {
+		fakeGoMain()
+		return
+	}
+
+	dir, err := os.MkdirTemp("", "fgm-cwd-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "create scratch cwd:", err)
+		os.Exit(1)
+	}
+	if err := os.Chdir(dir); err != nil {
+		fmt.Fprintln(os.Stderr, "chdir to scratch cwd:", err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 // closeAll closes a list of io.Closers, failing the test on any error.
 func closeAll(t *testing.T, closers ...io.Closer) {
 	t.Helper()
@@ -59,6 +84,53 @@ func TestValidateVersion(t *testing.T) {
 	}
 }
 
+// A marker file names the toolchain to run, and nothing reading one resolves
+// versions — so unlike a command-line argument it has to be exact.
+func TestValidateMarkerVersion(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"1.25.5", false},
+		{"1.0", false},
+		{"1.9", false},
+		{"1.19", false},
+		{"1.20", false},
+		{"1.21", true},
+		{"1.020", true},
+		{"2.0", true},
+		{"1.25", true},
+		{"1", true},
+		{"1.2.3.4", true},
+		{"", true},
+		{"latest", true},
+		{"../etc", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			err := validateMarkerVersion(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateMarkerVersion(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// fgm must never write a marker it would refuse to read back.
+func TestActivate_RejectsInexactVersion(t *testing.T) {
+	m := &Manager{root: t.TempDir(), log: func(string, ...any) {}}
+	if err := os.MkdirAll(m.versionDir("1.25"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Activate("1.25"); err == nil {
+		t.Fatal("expected activating a minor version to be refused")
+	}
+	if _, err := os.Stat(m.currentVersionFile()); !os.IsNotExist(err) {
+		t.Error("no marker should have been written")
+	}
+}
+
 // ── isStableVersion ─────────────────────────────────────────────────
 
 func TestIsStableVersion(t *testing.T) {
@@ -91,6 +163,9 @@ func TestSanitizePath(t *testing.T) {
 		wantErr bool
 	}{
 		{"normal path", "/tmp/extract", "go/bin/go", false},
+		{"empty name", "/tmp/extract", "", true},
+		{"parent itself", "/tmp/extract", "..", true},
+		{"sibling sharing prefix", "/tmp/extract", "../extract-other/go", true},
 		{"traversal blocked", "/tmp/extract", "../../../etc/passwd", true},
 		{"dot-dot in middle", "/tmp/extract", "go/../../etc/passwd", true},
 		{"absolute unix path blocked", "/tmp/extract", "/etc/passwd", true},
@@ -345,6 +420,51 @@ func TestExtractTarGz_SkipsSymlinks(t *testing.T) {
 
 // ── extractTarGz: normal archive ────────────────────────────────────
 
+func TestExtractTarGz_RejectsEscapingEntries(t *testing.T) {
+	for _, entry := range []string{"../outside", "go/../../outside", "../outside-dir/", "/outside", `C:\outside`, `\\server\share\outside`} {
+		t.Run(entry, func(t *testing.T) {
+			root := t.TempDir()
+			dest := filepath.Join(root, "extract")
+			if err := os.Mkdir(dest, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(root, "outside")
+			if err := os.WriteFile(outside, []byte("unchanged"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			archivePath := filepath.Join(root, "malicious.tar.gz")
+			f, err := os.Create(archivePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gz := gzip.NewWriter(f)
+			tw := tar.NewWriter(gz)
+			header := &tar.Header{Name: entry, Typeflag: tar.TypeReg, Mode: 0o644}
+			if strings.HasSuffix(entry, "/") {
+				header.Typeflag = tar.TypeDir
+			}
+			if err := tw.WriteHeader(header); err != nil {
+				t.Fatal(err)
+			}
+			closeAll(t, tw, gz, f)
+			if err := extractTarGz(context.Background(), archivePath, dest); err == nil {
+				t.Fatal("accepted an escaping archive entry")
+			}
+			data, err := os.ReadFile(outside)
+			if err != nil || string(data) != "unchanged" {
+				t.Fatalf("outside file changed: %q, %v", data, err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "outside-dir")); !os.IsNotExist(err) {
+				t.Fatalf("unexpected outside directory: %v", err)
+			}
+			entries, err := os.ReadDir(dest)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("unexpected extraction output: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
 func TestExtractTarGz_NormalArchive(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "good.tar.gz")
 	f, err := os.Create(archivePath)
@@ -448,6 +568,54 @@ func TestExtractZip_SkipsSymlinks(t *testing.T) {
 }
 
 // ── extractZip: normal archive ──────────────────────────────────────
+
+func TestExtractZip_RejectsEscapingEntries(t *testing.T) {
+	for _, entry := range []string{"../outside", "go/../../outside", "../extract-other/payload", "../outside-dir/", "/outside", `C:\outside`, `\\server\share\outside`} {
+		t.Run(entry, func(t *testing.T) {
+			root := t.TempDir()
+			dest := filepath.Join(root, "extract")
+			if err := os.Mkdir(dest, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(root, "outside")
+			if err := os.WriteFile(outside, []byte("unchanged"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			archivePath := filepath.Join(root, "malicious.zip")
+			f, err := os.Create(archivePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			zw := zip.NewWriter(f)
+			w, err := zw.Create(entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(entry, "/") {
+				if _, err := w.Write([]byte("overwritten")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			closeAll(t, zw, f)
+			if err := extractZip(context.Background(), archivePath, dest); err == nil {
+				t.Fatal("accepted an escaping archive entry")
+			}
+			data, err := os.ReadFile(outside)
+			if err != nil || string(data) != "unchanged" {
+				t.Fatalf("outside file changed: %q, %v", data, err)
+			}
+			entries, err := os.ReadDir(dest)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("unexpected extraction output: %v, %v", entries, err)
+			}
+			for _, name := range []string{"extract-other", "outside-dir"} {
+				if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+					t.Fatalf("unexpected outside path %s: %v", name, err)
+				}
+			}
+		})
+	}
+}
 
 func TestExtractZip_NormalArchive(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "good.zip")
@@ -937,12 +1105,73 @@ func TestCleanStaleTmp(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpDir, "orphan.tmp"), []byte("orphan"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	makeStale(t, filepath.Join(tmpDir, "install-abc123"), filepath.Join(tmpDir, "orphan.tmp"))
 
 	m.cleanStaleTmp()
 
 	entries, _ := os.ReadDir(tmpDir)
 	if len(entries) != 0 {
 		t.Fatalf("expected tmp to be empty, got %d entries", len(entries))
+	}
+}
+
+// Scratch space is shared, so the sweep has to leave alone anything recent
+// enough to belong to an install that is running right now.
+func TestCleanStaleTmp_KeepsRecentScratch(t *testing.T) {
+	m := &Manager{root: t.TempDir(), log: func(string, ...any) {}}
+	if err := m.ensureLayout(); err != nil {
+		t.Fatal(err)
+	}
+
+	inUse := filepath.Join(m.tmpDir(), "install-inflight")
+	if err := os.MkdirAll(inUse, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m.cleanStaleTmp()
+
+	if _, err := os.Stat(inUse); err != nil {
+		t.Errorf("sweep removed scratch space an install could be using: %v", err)
+	}
+}
+
+// A second install must not sweep the partial file the first one is still
+// writing to.
+func TestCleanStalePartials_KeepsInFlightDownload(t *testing.T) {
+	m := &Manager{root: t.TempDir(), log: func(string, ...any) {}}
+	if err := m.ensureLayout(); err != nil {
+		t.Fatal(err)
+	}
+
+	inFlight := filepath.Join(m.downloadsDir(), partialPrefix+"live")
+	if err := os.WriteFile(inFlight, []byte("downloading"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	abandoned := filepath.Join(m.downloadsDir(), partialPrefix+"dead")
+	if err := os.WriteFile(abandoned, []byte("killed run"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	makeStale(t, abandoned)
+
+	m.cleanStalePartials()
+
+	if _, err := os.Stat(inFlight); err != nil {
+		t.Errorf("sweep removed an in-flight download: %v", err)
+	}
+	if _, err := os.Stat(abandoned); !os.IsNotExist(err) {
+		t.Error("expected the abandoned partial download to be removed")
+	}
+}
+
+// makeStale backdates paths past the point where fgm treats them as
+// abandoned.
+func makeStale(t *testing.T, paths ...string) {
+	t.Helper()
+	old := time.Now().Add(-2 * staleAfter)
+	for _, path := range paths {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -978,6 +1207,29 @@ func TestMoveDir(t *testing.T) {
 	}
 	if string(got) != "binary" {
 		t.Fatalf("got %q, want %q", got, "binary")
+	}
+}
+
+// A destination that is already there is never merged into: the tree in the
+// way belongs to whoever put it there.
+func TestMoveDir_ReportsExistingDestination(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	dst := filepath.Join(t.TempDir(), "dst")
+	for _, dir := range []string{src, dst} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dst, "keep"), []byte("theirs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := moveDir(src, dst)
+	if !errors.Is(err, errDestExists) {
+		t.Fatalf("moveDir error = %v, want errDestExists", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "keep")); err != nil {
+		t.Errorf("the existing destination was disturbed: %v", err)
 	}
 }
 
@@ -1134,6 +1386,34 @@ func TestInstall(t *testing.T) {
 	}
 }
 
+// Two fgm runs installing the same version share a root. Whichever loses the
+// race used to delete the winner's freshly installed toolchain while cleaning
+// up what it thought was its own partial install.
+func TestInstall_ConcurrentInstallsLeaveTheToolchainIntact(t *testing.T) {
+	ctx := context.Background()
+	first := newTestManager(t, "1.25.5")
+	second := &Manager{
+		root:           first.root,
+		log:            func(string, ...any) {},
+		cachedManifest: first.cachedManifest,
+	}
+
+	errs := make(chan error, 2)
+	for _, m := range []*Manager{first, second} {
+		go func() { errs <- m.Install(ctx, "1.25.5") }()
+	}
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent install failed: %v", err)
+		}
+	}
+
+	goPath := filepath.Join(first.versionDir("1.25.5"), "bin", "go")
+	if _, err := os.Stat(goPath); err != nil {
+		t.Fatalf("expected an intact toolchain at %s: %v", goPath, err)
+	}
+}
+
 func TestUse(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t, "1.25.5")
@@ -1284,6 +1564,28 @@ func TestUninstall_NotInstalled(t *testing.T) {
 	err := m.Uninstall("1.99.0")
 	if err == nil {
 		t.Fatal("expected error uninstalling non-existent version")
+	}
+}
+
+// Current and uninstall have to agree on what the marker says, or a version
+// reported as active survives its own uninstall as a dangling marker.
+func TestUninstall_ClearsAHandEditedMarker(t *testing.T) {
+	m := &Manager{root: t.TempDir(), log: func(string, ...any) {}}
+	if err := os.MkdirAll(m.versionDir("1.25.5"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWriteFile(m.currentVersionFile(), []byte("1.25.5\nstray line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if current, err := m.Current(); err != nil || current != "1.25.5" {
+		t.Fatalf("Current() = %q, %v; want 1.25.5", current, err)
+	}
+
+	if err := m.Uninstall("1.25.5"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(m.currentVersionFile()); !os.IsNotExist(err) {
+		t.Error("expected the marker for the uninstalled version to be cleared")
 	}
 }
 
@@ -1457,6 +1759,104 @@ func TestEnv_StaleCurrentVersionReportsError(t *testing.T) {
 	}
 }
 
+// ── GOTOOLCHAIN ────────────────────────────────────────────────────
+
+// `go env -w GOTOOLCHAIN=local` writes to a file rather than the
+// environment, so reading os.Getenv alone reports "auto" on a machine Go
+// treats as pinned.
+func TestGoToolchain_ReadsPersistedSetting(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(envFile, []byte("GOPROXY=off\nGOTOOLCHAIN=local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOENV", envFile)
+	t.Setenv("GOTOOLCHAIN", "")
+
+	setting := goToolchain()
+	if setting.Value != "local" {
+		t.Errorf("value = %q, want local", setting.Value)
+	}
+	if setting.Source != toolchainFromFile {
+		t.Errorf("source = %q, want %q", setting.Source, toolchainFromFile)
+	}
+	if !strings.Contains(setting.String(), "go env -w") {
+		t.Errorf("report should say where the value came from, got %q", setting.String())
+	}
+}
+
+func TestGoToolchain_EnvironmentWinsOverFile(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(envFile, []byte("GOTOOLCHAIN=local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOENV", envFile)
+	t.Setenv("GOTOOLCHAIN", "go1.21.0")
+
+	setting := goToolchain()
+	if setting.Value != "go1.21.0" || setting.Source != toolchainFromEnv {
+		t.Errorf("setting = %+v, want go1.21.0 from the environment", setting)
+	}
+	if !setting.IsPin() {
+		t.Error("a named toolchain is a pin: it overrides whatever fgm activates")
+	}
+}
+
+func TestGoToolchain_DefaultsWhenNothingIsSet(t *testing.T) {
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOTOOLCHAIN", "")
+
+	setting := goToolchain()
+	if setting.Value != "auto" || setting.Source != "" {
+		t.Errorf("setting = %+v, want the auto default", setting)
+	}
+	if setting.String() != "auto (default)" {
+		t.Errorf("String() = %q", setting.String())
+	}
+	if setting.IsPin() {
+		t.Error("auto is not a pin")
+	}
+}
+
+// Go's "+auto" and "+path" suffixes say what to do when a go.mod needs a
+// different toolchain; they do not by themselves pin one.
+func TestGoToolchain_IsPin(t *testing.T) {
+	for value, want := range map[string]bool{
+		"auto":           false,
+		"local":          false,
+		"path":           false,
+		"local+auto":     false,
+		"local+path":     false,
+		"go1.25.0":       true,
+		"go1.25.0+auto":  true,
+		"/opt/go/bin/go": true,
+	} {
+		t.Run(value, func(t *testing.T) {
+			if got := (toolchainSetting{Value: value}).IsPin(); got != want {
+				t.Errorf("IsPin(%q) = %v, want %v", value, got, want)
+			}
+		})
+	}
+}
+
+// A persisted pin has to reach doctor, which is the whole point of reading
+// the file.
+func TestDoctor_WarnsAboutPersistedToolchainPin(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(envFile, []byte("GOTOOLCHAIN=go1.21.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOENV", envFile)
+	t.Setenv("GOTOOLCHAIN", "")
+
+	check := checkGoToolchain()
+	if check.Status != DoctorWarn {
+		t.Errorf("status = %q, want warn: %+v", check.Status, check)
+	}
+	if !strings.Contains(check.Message, "go env -w") {
+		t.Errorf("message should name the source, got %q", check.Message)
+	}
+}
+
 // ── Doctor ─────────────────────────────────────────────────────────
 
 func TestDoctor_HealthyInstall(t *testing.T) {
@@ -1484,6 +1884,34 @@ func TestDoctor_HealthyInstall(t *testing.T) {
 	}
 	if !hasDoctorCheck(checks, "go shim", DoctorOK) {
 		t.Fatalf("expected go shim check to pass, got %+v", checks)
+	}
+}
+
+// Upgrading fgm swaps the binary but leaves the shims where they are, so a
+// shim written by an older version keeps resolving versions the old way until
+// something says so.
+func TestDoctor_OutdatedShimWarns(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t, "1.25.5")
+	if err := m.Use(ctx, "1.25.5"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stand in for a shim generated by a previous fgm release.
+	if err := atomicWriteFile(m.shimPath("go"), []byte("#!/bin/sh\nexec go \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	checks := m.Doctor()
+	if !hasDoctorCheck(checks, "go shim", DoctorWarn) {
+		t.Fatalf("expected the outdated shim to be flagged, got %+v", checks)
+	}
+
+	if err := m.Reshim(); err != nil {
+		t.Fatal(err)
+	}
+	if !hasDoctorCheck(m.Doctor(), "go shim", DoctorOK) {
+		t.Error("expected reshim to bring the shim back up to date")
 	}
 }
 

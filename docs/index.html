@@ -206,6 +206,11 @@
         </div>
         <div
           class="grid grid-cols-1 sm:grid-cols-[14rem_1fr] gap-x-6 gap-y-1 px-5 py-4 hover:bg-surface/60 transition-colors">
+          <div><code class="font-mono text-accent text-sm">fgm use &lt;version&gt; --local</code></div>
+          <p class="text-sm text-muted">Pin the version for this directory tree by writing <code class="font-mono text-text">.go-version</code>.</p>
+        </div>
+        <div
+          class="grid grid-cols-1 sm:grid-cols-[14rem_1fr] gap-x-6 gap-y-1 px-5 py-4 hover:bg-surface/60 transition-colors">
           <div>
             <code class="font-mono text-accent text-sm">fgm uninstall &lt;version&gt;</code>
             <div class="text-xs text-muted mt-1">or <code class="font-mono">fgm un &lt;version&gt;</code></div>
@@ -223,7 +228,7 @@
         <div
           class="grid grid-cols-1 sm:grid-cols-[14rem_1fr] gap-x-6 gap-y-1 px-5 py-4 hover:bg-surface/60 transition-colors">
           <div><code class="font-mono text-accent text-sm">fgm current</code></div>
-          <p class="text-sm text-muted">Print the currently active Go version.</p>
+          <p class="text-sm text-muted">Print the active Go version, and the <code class="font-mono text-text">.go-version</code> pinning it if there is one.</p>
         </div>
         <div
           class="grid grid-cols-1 sm:grid-cols-[14rem_1fr] gap-x-6 gap-y-1 px-5 py-4 hover:bg-surface/60 transition-colors">
@@ -234,6 +239,11 @@
           class="grid grid-cols-1 sm:grid-cols-[14rem_1fr] gap-x-6 gap-y-1 px-5 py-4 hover:bg-surface/60 transition-colors">
           <div><code class="font-mono text-accent text-sm">fgm prune</code></div>
           <p class="text-sm text-muted">Remove cached downloads and the manifest cache.</p>
+        </div>
+        <div
+          class="grid grid-cols-1 sm:grid-cols-[14rem_1fr] gap-x-6 gap-y-1 px-5 py-4 hover:bg-surface/60 transition-colors">
+          <div><code class="font-mono text-accent text-sm">fgm reshim</code></div>
+          <p class="text-sm text-muted">Regenerate the <code class="font-mono text-text">go</code> and <code class="font-mono text-text">gofmt</code> shims — run it after upgrading fgm.</p>
         </div>
         <div
           class="grid grid-cols-1 sm:grid-cols-[14rem_1fr] gap-x-6 gap-y-1 px-5 py-4 hover:bg-surface/60 transition-colors">
@@ -310,10 +320,11 @@
           <span class="text-accent font-semibold">Resolve at runtime.</span>
           <span class="text-muted">
             <code class="font-mono text-text">go</code> and <code class="font-mono text-text">gofmt</code> shims in
-            <code class="font-mono text-text">~/.fgm/bin/</code> read
-            <code class="font-mono text-text">current-version</code> on every invocation and exec the right binary. No
-            <code class="font-mono text-text">eval</code>, no <code class="font-mono text-text">source</code>, no shell
-            hooks.
+            <code class="font-mono text-text">~/.fgm/bin/</code> resolve the version on every invocation — the nearest
+            <code class="font-mono text-text">.go-version</code> walking up from your working directory, otherwise
+            <code class="font-mono text-text">current-version</code> — then exec the right binary. Per-project versions
+            with no <code class="font-mono text-text">eval</code>, no <code class="font-mono text-text">source</code>,
+            no shell hooks.
           </span>
         </p>
       </div>

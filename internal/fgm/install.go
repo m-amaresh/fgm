@@ -101,6 +101,14 @@ func (m *Manager) Install(ctx context.Context, version string) error {
 	target := m.versionDir(version)
 	m.logv("installing to: %s", target)
 	if err := moveDir(extractedGo, target); err != nil {
+		// A second fgm can finish installing the same version while this one
+		// is still downloading. The tree that got there first is complete, so
+		// keep it — removing it as a "partial install" would break the
+		// command that already reported success.
+		if errors.Is(err, errDestExists) {
+			m.logv("go %s was installed by another run; keeping it", version)
+			return nil
+		}
 		_ = os.RemoveAll(target) // clean up partial version directory
 		return fmt.Errorf("move installed version: %w", err)
 	}
@@ -117,7 +125,9 @@ func (m *Manager) Use(ctx context.Context, version string) error {
 // Activate points the current-version marker at an already-installed Go version
 // and refreshes the shims. It returns an error if the version is not installed.
 func (m *Manager) Activate(version string) error {
-	if err := validateVersion(version); err != nil {
+	// The marker is read back with the strict rule, so writing anything but an
+	// exact version would activate something nothing can resolve.
+	if err := validateMarkerVersion(version); err != nil {
 		return err
 	}
 	if !m.isInstalled(version) {
@@ -137,17 +147,7 @@ func (m *Manager) Uninstall(version string) error {
 		return err
 	}
 	if !m.isInstalled(version) {
-		entries, _ := os.ReadDir(m.versionsDir())
-		var matches []string
-		for _, e := range entries {
-			if e.IsDir() && strings.HasPrefix(e.Name(), version+".") {
-				matches = append(matches, e.Name())
-			}
-		}
-		if len(matches) > 0 {
-			return fmt.Errorf("go %s is not installed (did you mean %s?)", version, strings.Join(matches, ", "))
-		}
-		return fmt.Errorf("go %s is not installed", version)
+		return m.notInstalledError(version)
 	}
 
 	// Compare raw marker contents instead of routing through Current(), which

@@ -29,7 +29,7 @@ func (m *Manager) Doctor() []DoctorCheck {
 		m.checkBinOnPath(),
 	}
 
-	current, err := m.Current()
+	effective, err := m.EffectiveCwd()
 	switch {
 	case err != nil:
 		checks = append(checks, DoctorCheck{
@@ -37,25 +37,54 @@ func (m *Manager) Doctor() []DoctorCheck {
 			Name:    "active version",
 			Message: err.Error(),
 		})
-	case current == "":
+	case effective.Version == "":
 		checks = append(checks, DoctorCheck{
 			Status:  DoctorWarn,
 			Name:    "active version",
 			Message: "no active Go version; run: fgm use latest",
 		})
+	case effective.IsLocal():
+		checks = append(checks, DoctorCheck{
+			Status:  DoctorOK,
+			Name:    "active version",
+			Message: fmt.Sprintf("%s (pinned by %s)", effective.Version, effective.Path),
+		})
 	default:
 		checks = append(checks, DoctorCheck{
 			Status:  DoctorOK,
 			Name:    "active version",
-			Message: current,
+			Message: effective.Version,
 		})
 	}
 
-	for _, name := range []string{"go", "gofmt"} {
+	for _, name := range shimNames {
 		checks = append(checks, m.checkShim(name))
 	}
 
-	return checks
+	return append(checks, checkGoToolchain())
+}
+
+// checkGoToolchain reports the GOTOOLCHAIN setting. Go can switch toolchains
+// on its own, so a value naming a specific toolchain silently overrides
+// whatever version fgm activated — that is worth flagging.
+func checkGoToolchain() DoctorCheck {
+	setting := goToolchain()
+	switch {
+	case setting.IsPin():
+		return DoctorCheck{
+			Status:  DoctorWarn,
+			Name:    "GOTOOLCHAIN",
+			Message: fmt.Sprintf("pinned to %s; this overrides the version fgm activates", setting),
+		}
+	case setting.Source == "":
+		return DoctorCheck{
+			Status:  DoctorOK,
+			Name:    "GOTOOLCHAIN",
+			Message: setting.String() + "; a go.mod needing a newer Go will download and run that toolchain",
+		}
+	default:
+		return DoctorCheck{Status: DoctorOK, Name: "GOTOOLCHAIN", Message: setting.String()}
+	}
 }
 
 func (m *Manager) checkDir(name, path string) DoctorCheck {
@@ -128,6 +157,25 @@ func (m *Manager) checkShim(name string) DoctorCheck {
 			Status:  DoctorFail,
 			Name:    name + " shim",
 			Message: fmt.Sprintf("%s is not executable", path),
+		}
+	}
+
+	// Upgrading fgm replaces the binary but leaves the shims alone, so a shim
+	// written by an older version can quietly keep resolving versions the old
+	// way — ignoring .go-version, for instance.
+	current, err := m.shimIsCurrent(name)
+	if err != nil {
+		return DoctorCheck{
+			Status:  DoctorFail,
+			Name:    name + " shim",
+			Message: fmt.Sprintf("cannot read %s: %v", path, err),
+		}
+	}
+	if !current {
+		return DoctorCheck{
+			Status:  DoctorWarn,
+			Name:    name + " shim",
+			Message: fmt.Sprintf("%s is out of date; run: fgm reshim", path),
 		}
 	}
 	return DoctorCheck{Status: DoctorOK, Name: name + " shim", Message: path}

@@ -32,22 +32,17 @@ func normalizedFileMode(mode os.FileMode) os.FileMode {
 }
 
 // sanitizePath validates that an archive entry name resolves within dest.
-// Rejects absolute paths (Unix and Windows drive/UNC forms) outright, then
-// uses filepath.Rel which CodeQL recognizes as a Zip Slip sanitizer.
+// IsLocal guarantees that joining name to dest stays lexically within dest.
+// Keep the cross-platform absolute-path rejection as well; symlink parents
+// are checked separately before extraction writes anything.
 func sanitizePath(dest, name string) (string, error) {
-	if filepath.IsAbs(name) || filepath.VolumeName(name) != "" || isWindowsAbsolutePath(name) {
+	if !filepath.IsLocal(name) {
 		return "", fmt.Errorf("archive entry escapes destination: %s", name)
 	}
-	dest = filepath.Clean(dest)
-	target := filepath.Join(dest, name)
-	rel, err := filepath.Rel(dest, target)
-	if err != nil {
+	if isWindowsAbsolutePath(name) {
 		return "", fmt.Errorf("archive entry escapes destination: %s", name)
 	}
-	if strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." {
-		return "", fmt.Errorf("archive entry escapes destination: %s", name)
-	}
-	return target, nil
+	return filepath.Join(dest, name), nil
 }
 
 func isWindowsAbsolutePath(name string) bool {

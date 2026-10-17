@@ -2,8 +2,11 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/m-amaresh/fgm/internal/fgm"
 )
 
 func newUninstallCmd() *cobra.Command {
@@ -25,7 +28,18 @@ func newUninstallCmd() *cobra.Command {
 			if err := manager.Uninstall(version); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s Uninstalled go %s\n", green("✓"), version)
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "%s Uninstalled go %s\n", green("✓"), version)
+
+			// A .go-version naming the version just removed keeps pointing at
+			// it, and fgm cannot edit a project's file on the user's behalf —
+			// so say where the now-broken pin is.
+			if dir, err := os.Getwd(); err == nil {
+				if pinned, path, err := fgm.FindLocalVersion(dir); err == nil && pinned == version {
+					fmt.Fprintf(out, "%s %s still pins go %s here; update it or run: fgm use <version> --local\n",
+						yellow("!"), path, version)
+				}
+			}
 			return nil
 		},
 	}

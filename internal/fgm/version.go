@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -72,7 +73,7 @@ func (m *Manager) ResolveInstalledVersion(input string) (string, error) {
 			return "", err
 		}
 		if !m.isInstalled(input) {
-			return "", fmt.Errorf("go %s is not installed", input)
+			return "", m.notInstalledError(input)
 		}
 		return input, nil
 	}
@@ -91,6 +92,24 @@ func (m *Manager) ResolveInstalledVersion(input string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no installed version found matching %q", input)
+}
+
+// validateMarkerVersion accepts exact release names. Before Go 1.21 the
+// initial release was named 1.N, rather than 1.N.0. Modern minor versions
+// remain invalid here because the shims do no version resolution.
+func validateMarkerVersion(version string) error {
+	if err := validateVersion(version); err != nil {
+		return err
+	}
+	if strings.Count(version, ".") != 2 {
+		major, minor, _ := strings.Cut(version, ".")
+		n, err := strconv.Atoi(minor)
+		if err == nil && major == "1" && n >= 0 && n <= 20 && strconv.Itoa(n) == minor {
+			return nil
+		}
+		return fmt.Errorf("invalid Go version %q (expected an exact version like 1.25.5)", version)
+	}
+	return nil
 }
 
 func validateVersion(version string) error {

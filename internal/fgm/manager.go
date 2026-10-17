@@ -38,6 +38,9 @@ func NewManager(root string, log LogFunc) (*Manager, error) {
 // Root returns the fgm home directory path.
 func (m *Manager) Root() string { return m.root }
 
+// ShimDir returns the directory the go and gofmt shims live in.
+func (m *Manager) ShimDir() string { return m.binDir() }
+
 // logv logs a message only when verbose mode is enabled.
 func (m *Manager) logv(format string, args ...any) {
 	if m.Verbose {

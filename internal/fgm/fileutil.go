@@ -2,6 +2,7 @@ package fgm
 
 import (
 	"cmp"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,12 +10,22 @@ import (
 	"strings"
 )
 
+// errDestExists reports a move onto a destination that is already there. The
+// caller has to tell that apart from a failed move, because the tree in the
+// way belongs to somebody else and must not be cleaned up.
+var errDestExists = errors.New("destination already exists")
+
 // moveDir tries os.Rename first, falling back to a recursive copy + remove
 // when src and dst are on different filesystems.
 func moveDir(src, dst string) error {
 	err := os.Rename(src, dst)
 	if err == nil {
 		return nil
+	}
+	// An existing destination is the usual reason a rename fails here, and
+	// copying into it would merge two trees rather than replace one.
+	if _, statErr := os.Stat(dst); statErr == nil {
+		return errDestExists
 	}
 	// On cross-device rename, fall back to copy.
 	if err := copyDir(src, dst); err != nil {

@@ -157,6 +157,12 @@ chmod +x "${INSTALL_DIR}/fgm"
 # Create FGM home + bin dir for shims
 mkdir -p "${FGM_DIR}/bin"
 
+# On an upgrade the shims are still the ones the previous version wrote, and
+# they resolve versions on their own — regenerate them so shim fixes land.
+if [ -e "${FGM_DIR}/bin/go" ]; then
+  "${INSTALL_DIR}/fgm" reshim >/dev/null 2>&1 || info "Could not regenerate shims; run: fgm reshim"
+fi
+
 # ── PATH setup ───────────────────────────────────────────────────────
 MARKER="# fgm-managed-path"
 FGM_PATH_LINE="export PATH=\"\${HOME}/.local/bin:\${HOME}/.fgm/bin:\${HOME}/go/bin:\$PATH\" ${MARKER}"

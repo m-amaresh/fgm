@@ -36,6 +36,14 @@ The installer downloads the correct binary for your OS and architecture, places 
 
 > Restart your terminal after installation, or `source` your shell profile as shown in the installer output.
 
+Both installers verify the downloaded archive against the release
+`checksums.txt`. Release archives also carry signed build provenance, which
+you can verify independently:
+
+```sh
+gh attestation verify fgm_v1.1.0_linux_amd64.tar.gz --repo m-amaresh/fgm
+```
+
 ## Quick start
 
 ```sh
@@ -50,11 +58,13 @@ go version            # verify it worked
 |---------|-------|-------------|
 | `fgm install <version>` | `in` | Download a Go version. Add `--use` to activate it in one step. |
 | `fgm use <version>` | | Install if needed, then activate |
+| `fgm use <version> --local` | | Pin the version for this directory via `.go-version` |
 | `fgm uninstall <version>` | `un` | Remove an installed Go version |
 | `fgm list` | `ls` | List installed versions |
 | `fgm available` | `list-remote` | List installable Go versions |
 | `fgm current` | | Show the active Go version |
 | `fgm prune` | | Remove cached downloads and the manifest cache |
+| `fgm reshim` | | Regenerate the `go` and `gofmt` shims (run after upgrading fgm) |
 | `fgm env` | | Print fgm environment diagnostics |
 | `fgm doctor` | | Check fgm installation health |
 | `fgm version` | | Print fgm version, commit, and build info |
@@ -85,12 +95,74 @@ fgm list                   # see what's installed
 fgm uninstall 1.22.12     # remove a version you no longer need
 ```
 
+## Per-directory versions
+
+A project can pin its own Go version with a `.go-version` file. The shims read
+it at invocation time, so switching directories switches Go — still with no
+shell hook.
+
+```sh
+cd ~/work/legacy-service
+fgm use 1.22.12 --local    # installs if needed, writes ./.go-version
+
+go version                 # go version go1.22.12 ...
+cd ~ && go version         # back to the global version
+```
+
+The shims walk up from the working directory and use the **nearest**
+`.go-version` they find, falling back to the globally activated version when
+there is none. Commit the file to share the pin with your team.
+
+```
+~/work/legacy-service/.go-version     ← "1.22.12"
+~/work/legacy-service/cmd/api/        ← also gets 1.22.12
+~/work/other-project/                 ← global version
+```
+
+`fgm current` reports which one is in effect and where it came from:
+
+```sh
+$ fgm current
+1.22.12 (pinned by /home/you/work/legacy-service/.go-version)
+```
+
+> The pinned version must be an exact version (`1.22.12`, not `1.22`) and must
+> already be installed — the shims deliberately do no network or resolution
+> work. `fgm use <version> --local` handles both.
+
+The file has to contain nothing but an exact version: the shims turn it
+straight into a path under `~/.fgm/versions` and resolve nothing, so `1.22`,
+a path, or a comment on the first line is refused rather than interpreted.
+Only the first line is read, and the whitespace around it is ignored. The
+same rule applies to `~/.fgm/current-version`.
+
+Historical initial releases through Go 1.20 use exact names such as `1.19`
+and `1.20` (without `.0`); these are accepted as literal installed versions.
+
+## Go's own toolchain switching
+
+Go 1.21 and later can download and run a *different* toolchain than the one
+you invoked. If a project's `go.mod` requires a newer Go than the active
+version, `go build` fetches that toolchain and uses it, so `go version` can
+disagree with `fgm current`. This is Go's behaviour, not fgm's.
+
+```sh
+go env GOTOOLCHAIN     # auto (default) — Go may switch
+export GOTOOLCHAIN=local  # never switch; fail instead if go.mod needs newer
+```
+
+`fgm doctor` reports the effective setting and where it came from — the
+environment or `go env -w`, which writes to a file rather than the environment
+— and warns if `GOTOOLCHAIN` names a specific toolchain, since that pin
+overrides whatever version fgm activates.
+
 ## How it works
 
 1. Downloads official binaries from [go.dev/dl](https://go.dev/dl/) and verifies SHA-256 checksums.
 2. Extracts each verified version into `~/.fgm/versions/<version>/`.
 3. `fgm use` writes the active version to `~/.fgm/current-version` and generates lightweight shims in `~/.fgm/bin/`.
-4. The `go` and `gofmt` shims read `current-version` at invocation time — **no shell hook or eval needed**.
+4. The `go` and `gofmt` shims resolve the version at invocation time — nearest
+   `.go-version` first, then `current-version` — **no shell hook or eval needed**.
 5. The Go release manifest is cached locally for 15 minutes so repeated commands stay fast.
 
 ### Directory layout
