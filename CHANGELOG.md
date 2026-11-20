@@ -5,7 +5,7 @@ All notable changes to fgm will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] - 2026-08-08
+## [1.1.0] - 2026-11-20
 
 ### Added
 
@@ -29,11 +29,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that is out of date, and the installers reshim on upgrade.
 - Release archives now carry signed build provenance. Verify with
   `gh attestation verify <archive> --repo m-amaresh/fgm`.
+- fgm now notices when the `go.mod` or `go.work` in scope asks for a newer Go
+  than the version it resolves to. Go 1.21+ quietly downloads and runs that
+  newer toolchain, so `go version` would disagree with `fgm current` for no
+  visible reason. `fgm doctor` and `fgm env` report the requirement, `fgm use`
+  warns after activating a version that will not be used here, and
+  `fgm current` adds a note on stderr (stdout stays a single line for
+  scripts). The message says what Go will do under the `GOTOOLCHAIN` in
+  effect — switch, search `PATH`, or fail — and suggests
+  `fgm use <version> --local` to match.
 - `SECURITY.md` and `CONTRIBUTING.md`.
 
 ### Changed
 
-- Require Go 1.27.2 for development and release builds.
+- Require Go 1.27.4 for development and release builds.
+- Updated indirect dependencies: `golang.org/x/sys` v0.50.0,
+  `github.com/spf13/pflag` v1.1.0, `github.com/mattn/go-colorable` v0.1.16.
 - `fgm list` marks the version the shims would actually use, so a
   `.go-version` pin is reflected in the listing.
 - `fgm use` warns when a `.go-version` in scope overrides the version it just
@@ -61,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `latest` and minor versions such as `1.25` now resolve to the highest
+  matching stable release. They used to take the first match in go.dev's
+  manifest, which is only correct as long as go.dev keeps listing the newest
+  release first.
 - Unreadable Unix version markers stop execution instead of falling back to
   the global toolchain. Files without a trailing newline remain supported.
 - Exact historical initial release names (`1.0` through `1.20`) remain valid
