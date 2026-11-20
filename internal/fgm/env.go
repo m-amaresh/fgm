@@ -24,6 +24,10 @@ type EnvInfo struct {
 	LocalError  string
 	Platform    string
 	GoToolchain string
+	// ModRequirement is what the go.mod or go.work in scope asks for, if
+	// anything; ModNote is set when that is newer than the version in effect.
+	ModRequirement ModRequirement
+	ModNote        string
 }
 
 func (m *Manager) Env() EnvInfo {
@@ -36,7 +40,8 @@ func (m *Manager) Env() EnvInfo {
 		GoToolchain:  goToolchain().String(),
 	}
 
-	if dir, err := os.Getwd(); err == nil {
+	dir, dirErr := os.Getwd()
+	if dirErr == nil {
 		version, path, err := FindLocalVersion(dir)
 		switch {
 		case err != nil:
@@ -45,14 +50,25 @@ func (m *Manager) Env() EnvInfo {
 			info.LocalVersion = version
 			info.LocalFile = path
 		}
+		info.ModRequirement, _ = FindModRequirement(dir)
 	}
 
 	current, err := m.Current()
 	if err != nil {
 		info.CurrentError = err.Error()
-		return info
+	} else {
+		info.CurrentVersion = current
 	}
-	info.CurrentVersion = current
+
+	effective := info.CurrentVersion
+	if info.LocalVersion != "" {
+		effective = info.LocalVersion
+	}
+	if dirErr == nil {
+		if note, _ := ModToolchainNote(dir, effective); note != nil {
+			info.ModNote = note.String()
+		}
+	}
 	return info
 }
 

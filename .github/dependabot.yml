@@ -1,15 +1,19 @@
 version: 2
 updates:
+  # Monthly, one grouped PR per ecosystem: fgm is low-traffic, and a batch a
+  # month is easier to review than a stream of single-bump PRs.
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]

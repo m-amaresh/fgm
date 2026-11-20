@@ -41,6 +41,7 @@ func newUseCmd() *cobra.Command {
 					return err
 				}
 				fmt.Fprintf(out, "%s Pinned go %s in %s\n", green("✓"), version, path)
+				warnModToolchain(out, version)
 				return nil
 			}
 
@@ -58,6 +59,8 @@ func newUseCmd() *cobra.Command {
 			case pinned != "" && pinned != version:
 				fmt.Fprintf(out, "%s %s pins go %s here, which overrides this\n",
 					yellow("!"), path, pinned)
+			default:
+				warnModToolchain(out, version)
 			}
 			return nil
 		},

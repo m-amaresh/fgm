@@ -57,6 +57,12 @@ func (m *Manager) Doctor() []DoctorCheck {
 		})
 	}
 
+	if err == nil {
+		if check, ok := checkModToolchain(effective.Version); ok {
+			checks = append(checks, check)
+		}
+	}
+
 	for _, name := range shimNames {
 		checks = append(checks, m.checkShim(name))
 	}
@@ -85,6 +91,31 @@ func checkGoToolchain() DoctorCheck {
 	default:
 		return DoctorCheck{Status: DoctorOK, Name: "GOTOOLCHAIN", Message: setting.String()}
 	}
+}
+
+// checkModToolchain compares the version fgm resolves to against what the
+// go.mod or go.work in scope asks for. It reports nothing outside a module.
+func checkModToolchain(active string) (DoctorCheck, bool) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return DoctorCheck{}, false
+	}
+	note, err := ModToolchainNote(dir, active)
+	switch {
+	case err != nil:
+		return DoctorCheck{Status: DoctorWarn, Name: "go.mod", Message: err.Error()}, true
+	case note != nil:
+		return DoctorCheck{Status: DoctorWarn, Name: "go.mod", Message: note.String()}, true
+	}
+	req, err := FindModRequirement(dir)
+	if err != nil || req.Version == "" || active == "" {
+		return DoctorCheck{}, false
+	}
+	return DoctorCheck{
+		Status:  DoctorOK,
+		Name:    "go.mod",
+		Message: fmt.Sprintf("%s requires go %s; satisfied by %s", req.Path, req.Version, active),
+	}, true
 }
 
 func (m *Manager) checkDir(name, path string) DoctorCheck {

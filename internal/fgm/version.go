@@ -17,13 +17,8 @@ func (m *Manager) ResolveVersion(ctx context.Context, input string) (string, err
 		if err != nil {
 			return "", err
 		}
-		// Skip RC/beta releases — stable versions contain only digits and dots
-		// after the "go" prefix.
-		for _, r := range releases {
-			v := strings.TrimPrefix(r.Version, "go")
-			if isStableVersion(v) {
-				return v, nil
-			}
+		if v := newestStable(releases, func(string) bool { return true }); v != "" {
+			return v, nil
 		}
 		return "", errors.New("no stable releases found in Go manifest")
 	}
@@ -44,14 +39,29 @@ func (m *Manager) ResolveVersion(ctx context.Context, input string) (string, err
 	if err != nil {
 		return "", err
 	}
-	prefix := "go" + input
-	for _, r := range releases {
-		v := strings.TrimPrefix(r.Version, "go")
-		if (r.Version == prefix || strings.HasPrefix(r.Version, prefix+".")) && isStableVersion(v) {
-			return v, nil
-		}
+	matches := func(v string) bool { return v == input || strings.HasPrefix(v, input+".") }
+	if v := newestStable(releases, matches); v != "" {
+		return v, nil
 	}
 	return "", fmt.Errorf("no release found matching %q", input)
+}
+
+// newestStable returns the highest stable version in the manifest accepted by
+// match, or "" when there is none. It compares versions rather than trusting
+// the manifest to list the newest release first: go.dev happens to, but
+// nothing promises it, and getting it wrong would silently install an old Go.
+func newestStable(releases []releaseManifest, match func(string) bool) string {
+	var best string
+	for _, r := range releases {
+		v := strings.TrimPrefix(r.Version, "go")
+		if !isStableVersion(v) || validateVersion(v) != nil || !match(v) {
+			continue
+		}
+		if best == "" || compareVersions(v, best) > 0 {
+			best = v
+		}
+	}
+	return best
 }
 
 // ResolveInstalledVersion resolves "latest", minor versions (e.g. "1.25"),

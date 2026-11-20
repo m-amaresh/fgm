@@ -872,6 +872,50 @@ func TestResolveVersion_MinorNotFound(t *testing.T) {
 	}
 }
 
+// go.dev lists the newest release first, but nothing guarantees it; the
+// resolver has to pick the highest version whatever the order.
+func TestResolveVersion_IgnoresManifestOrder(t *testing.T) {
+	m := &Manager{
+		root: t.TempDir(),
+		cachedManifest: []releaseManifest{
+			{Version: "go1.24.3"},
+			{Version: "go1.25.4"},
+			{Version: "go1.26rc1"},
+			{Version: "go1.25.10"},
+			{Version: "go1.25.5"},
+		},
+	}
+	for input, want := range map[string]string{"latest": "1.25.10", "1.25": "1.25.10", "1.24": "1.24.3"} {
+		got, err := m.ResolveVersion(context.Background(), input)
+		if err != nil {
+			t.Fatalf("%s: %v", input, err)
+		}
+		if got != want {
+			t.Errorf("ResolveVersion(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+// A pre-1.21 initial release is named without a patch suffix, and the minor
+// prefix must not match a longer minor (1.2 is not 1.20).
+func TestResolveVersion_MinorMatchesInitialReleaseOnly(t *testing.T) {
+	m := &Manager{
+		root: t.TempDir(),
+		cachedManifest: []releaseManifest{
+			{Version: "go1.20.1"},
+			{Version: "go1.20"},
+			{Version: "go1.2.2"},
+		},
+	}
+	got, err := m.ResolveVersion(context.Background(), "1.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "1.2.2" {
+		t.Errorf("ResolveVersion(1.2) = %q, want 1.2.2", got)
+	}
+}
+
 // ── Available ──────────────────────────────────────────────────────
 
 func TestAvailable_LatestPerMinor(t *testing.T) {
