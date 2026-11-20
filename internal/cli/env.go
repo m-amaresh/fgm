@@ -31,9 +31,12 @@ func newEnvCmd() *cobra.Command {
 			if info.LocalVersion != "" {
 				fmt.Fprintf(w, "local:         %s (%s)\n", info.LocalVersion, info.LocalFile)
 			}
+			if req := info.ModRequirement; req.Version != "" {
+				fmt.Fprintf(w, "go.mod:        go %s (%s)\n", req.Version, req.Path)
+			}
 			fmt.Fprintf(w, "platform:      %s\n", info.Platform)
 			fmt.Fprintf(w, "GOTOOLCHAIN:   %s\n", info.GoToolchain)
-			for _, warning := range []string{info.LocalError, info.CurrentError} {
+			for _, warning := range []string{info.LocalError, info.CurrentError, info.ModNote} {
 				if warning != "" {
 					fmt.Fprintln(w)
 					fmt.Fprintf(w, "warning: %s\n", warning)

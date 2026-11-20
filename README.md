@@ -151,7 +151,12 @@ go env GOTOOLCHAIN     # auto (default) — Go may switch
 export GOTOOLCHAIN=local  # never switch; fail instead if go.mod needs newer
 ```
 
-`fgm doctor` reports the effective setting and where it came from — the
+fgm points this out when it happens: inside a module whose `go.mod` (or
+`go.work`) needs a newer Go than the version in effect, `fgm current`,
+`fgm use`, `fgm env` and `fgm doctor` say so, and suggest
+`fgm use <version> --local` to make the two agree.
+
+`fgm doctor` also reports the effective setting and where it came from — the
 environment or `go env -w`, which writes to a file rather than the environment
 — and warns if `GOTOOLCHAIN` names a specific toolchain, since that pin
 overrides whatever version fgm activates.

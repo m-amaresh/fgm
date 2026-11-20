@@ -28,9 +28,12 @@ func newCurrentCmd() *cobra.Command {
 			}
 			if effective.IsLocal() {
 				fmt.Fprintf(w, "%s (pinned by %s)\n", effective.Version, effective.Path)
-				return nil
+			} else {
+				fmt.Fprintln(w, effective.Version)
 			}
-			fmt.Fprintln(w, effective.Version)
+			// On stderr, so scripts reading the version from stdout still
+			// get exactly one line.
+			warnModToolchain(cmd.ErrOrStderr(), effective.Version)
 			return nil
 		},
 	}

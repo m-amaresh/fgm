@@ -597,3 +597,83 @@ func runCLICommand(t *testing.T, command *cobra.Command) (string, error) {
 	err = command.RunE(cmd, nil)
 	return out.String(), err
 }
+
+// isolateGoEnv keeps the developer's own Go settings from changing what the
+// go.mod checks report.
+func isolateGoEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOTOOLCHAIN", "")
+}
+
+func TestCurrentCommand_WarnsOnStderrWhenGoModNeedsNewerGo(t *testing.T) {
+	isolateGoEnv(t)
+	manager := newCLIManager(t, "1.25.5")
+	if err := manager.Activate("1.25.5"); err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	t.Chdir(work)
+	if err := os.WriteFile(filepath.Join(work, "go.mod"), []byte("module x\ngo 1.27.4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newCurrentCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.WithValue(context.Background(), managerKey{}, manager))
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "1.25.5\n" {
+		t.Errorf("stdout should be just the version for scripts, got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "requires go 1.27.4") {
+		t.Errorf("expected a go.mod warning on stderr, got %q", stderr.String())
+	}
+}
+
+func TestUseCommand_WarnsWhenGoModNeedsNewerGo(t *testing.T) {
+	isolateGoEnv(t)
+	manager := newCLIManager(t, "1.25.5", "1.27.4")
+	work := t.TempDir()
+	t.Chdir(work)
+	if err := os.WriteFile(filepath.Join(work, "go.mod"), []byte("module x\ngo 1.27.4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runCmd(t, manager, newUseCmd(), "1.25.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "requires go 1.27.4") || !strings.Contains(out, "fgm use 1.27.4 --local") {
+		t.Errorf("expected a go.mod warning with a fix: %q", out)
+	}
+
+	out, err = runCmd(t, manager, newUseCmd(), "--local", "1.27.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "requires go") {
+		t.Errorf("a satisfying version should not warn: %q", out)
+	}
+}
+
+func TestEnvCommand_ReportsGoMod(t *testing.T) {
+	isolateGoEnv(t)
+	work := t.TempDir()
+	t.Chdir(work)
+	if err := os.WriteFile(filepath.Join(work, "go.mod"), []byte("module x\ngo 1.27.4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runCLICommand(t, newEnvCmd())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "go.mod:") || !strings.Contains(out, "go 1.27.4") {
+		t.Errorf("expected env to report the go.mod requirement: %q", out)
+	}
+}
